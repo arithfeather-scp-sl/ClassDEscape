@@ -10,6 +10,7 @@ using UnityEngine;
 using UnityEngine.Networking;
 using Smod2.EventHandlers;
 using Smod2.EventSystem.Events;
+using MEC;
 
 /// <summary>
 /// -before start-
@@ -50,13 +51,21 @@ namespace ArithFeather.ClassDEscape
 		SmodMinor = 4,
 		SmodRevision = 0
 		)]
-	public class ClassDEscape : Plugin, IEventHandlerWaitingForPlayers, IEventHandlerSetConfig, IEventHandlerSetRole, 
+	public class ClassDEscape : Plugin, IEventHandlerWaitingForPlayers, IEventHandlerSetConfig, IEventHandlerSetRole,
 		IEventHandlerPlayerJoin, IEventHandlerElevatorUse, IEventHandlerPlayerPickupItem, IEventHandlerDoorAccess,
 		IEventHandlerCheckEscape, IEventHandlerRoundStart, IEventHandlerCallCommand, IEventHandler079AddExp,
-		IEventHandlerGeneratorFinish, IEventHandlerPlayerDie, IEventHandlerDecideTeamRespawnQueue, IEventHandlerPlayerDropItem,
-		IEventHandlerTeamRespawn, IEventHandlerPlayerHurt
+		IEventHandlerGeneratorFinish, IEventHandlerPlayerDie, IEventHandlerDecideTeamRespawnQueue,
+		IEventHandlerTeamRespawn, IEventHandlerPlayerHurt, IEventHandlerLCZDecontaminate
 	{
 		public const string ModVersion = "1.00";
+
+		private const float TimeUntilClassDLightFlicker = 29.5f;
+		private const float TimeUntilIntroduction = 5f;
+		private const float TimeUntil173 = 15f; // 20 seconds after freedom
+		private const float TimeUntilDecontam = 8f;
+
+		private const float TotalTimeUntil173 = TimeUntilClassDLightFlicker + TimeUntilIntroduction + TimeUntil173;
+		private const float TotalTimeUntilDecontam = 4.44f + ((TotalTimeUntil173 + TimeUntilDecontam) / 60f);
 
 		#region Const text values
 
@@ -76,10 +85,11 @@ namespace ArithFeather.ClassDEscape
 		[ConfigOption] private readonly bool disablePlugin = false;
 		[ConfigOption] private readonly bool showGameStartMessage = true;
 		[ConfigOption] private readonly bool useDefaultConfig = true;
-		[ConfigOption] private readonly float expMultiplier = 10;
+		[ConfigOption] private readonly float expMultiplier = 50f;
 		[ConfigOption] private readonly float peanutStartHP = 0.5f;
-		[ConfigOption] private readonly float deconKillTime = 120;
-	
+		[ConfigOption] private readonly float deconKillTime = 120f;
+		[ConfigOption] private readonly bool skipIntro = true;
+
 		private readonly FieldInfo cachedPlayerConnFieldInfo = typeof(SmodPlayer).GetField("conn", BindingFlags.NonPublic | BindingFlags.Instance);
 
 		//+ Round Data
@@ -91,12 +101,8 @@ namespace ArithFeather.ClassDEscape
 
 		private ZoneType currentGameState;
 
-		private List<int> playerIdhaveKeyCard;
-		private List<int> PlayerIdhaveKeyCard => playerIdhaveKeyCard ?? (playerIdhaveKeyCard = new List<int>());
 		private List<ElevatorPlayer> playersReachedElevator;
 		private List<ElevatorPlayer> PlayersReachedElevator => playersReachedElevator ?? (playersReachedElevator = new List<ElevatorPlayer>());
-		private List<int> playerIdConvertedNuts;
-		private List<int> PlayerIdConvertedNuts => playerIdhaveKeyCard ?? (playerIdhaveKeyCard = new List<int>());
 
 		private class ElevatorPlayer
 		{
@@ -133,27 +139,29 @@ namespace ArithFeather.ClassDEscape
 				case "smart_class_picker":
 					ev.Value = false;
 					break;
+				case "decontamination_time":
+					ev.Value = TotalTimeUntilDecontam;
+					break;
+				case "173_door_starting_cooldown":
+					ev.Value = (int)TotalTimeUntil173;
+					break;
 
 				case "team_respawn_queue":
 					if (useDefaultConfig) ev.Value = "404044404444044444044444404444";
 					break;
-				case "decontamination_time":
-					if (useDefaultConfig) ev.Value = 5f;
-					break;
-
 			}
 		}
 
 		public void OnCallCommand(PlayerCallCommandEvent ev)
 		{
-			if (ev.Command.ToUpper() == "TEST")
-			{
+			Server.Map.AnnounceCustomMessage(ev.Command);
 
-			}
-			if (ev.Command.ToUpper() == "HELP")
-			{
-				ev.ReturnMessage = "";
-			}
+
+			//switch (ev.Command.ToUpper())
+			//{
+			//	case "HELP":
+			//		break;
+			//}
 		}
 
 		public void OnPlayerJoin(PlayerJoinEvent ev)
@@ -189,7 +197,7 @@ namespace ArithFeather.ClassDEscape
 							if (el.ElevatorType == ElevatorType.LiftA || el.ElevatorType == ElevatorType.LiftB)
 							{
 								PlayersReachedElevator.Add(new ElevatorPlayer(ev.Player, el));
-									break;
+								break;
 							}
 						}
 
@@ -213,16 +221,25 @@ namespace ArithFeather.ClassDEscape
 				return;
 			}
 
-			
 			cachedBroadcast = GameObject.Find("Host").GetComponent<Broadcast>();
 			roundStarted = false;
 			generatorsActivated = 0;
 			PlayersReachedElevator.Clear();
-			PlayerIdhaveKeyCard.Clear();
-			PlayerIdConvertedNuts.Clear();
 			currentGameState = ZoneType.LCZ;
 			RandomItemSpawner.RandomItemSpawner.Instance.UseDefaultEvents = false;
 			deconPlayerDamage = (float)(100 / (deconKillTime / 0.265));
+
+			// Lock Class D Doors
+			var doors = Server.Map.GetDoors();
+			var doorCount = doors.Count;
+			for (int i = 0; i < doorCount; i++)
+			{
+				var door = doors[i].GetComponent() as Door;
+				if (door.doorType == 0 && door.name.StartsWith("PrisonDoor"))
+				{
+					door.Networklocked = true;
+				}
+			}
 
 			//var individualSpawns = ArithSpawningKit.IndividualSpawns.IndividualSpawns.Instance;
 			//individualSpawns.DisablePlugin = false;
@@ -235,62 +252,33 @@ namespace ArithFeather.ClassDEscape
 			var numPlayers = Server.NumPlayers;
 			// 10 rooms total = spawn 5 cards for 50% chance to find one when two player.
 			// 21 item spawn points - lets include the old player random spawns.
-			// **Make sure there's enough spawn points for max players, say 40?
-			// 3 * (5 + (numPlayers / 2)) = 25 spawn points for cards, 25 for radios, 25 for medkits. = 75 spawn requirement
-			//
-			// Other vars...
-			// Decontamination time. SCP die in 5 seconds? Player die in 1 minute? Figure out how fast damage ticks are
-			//var itemsToSpawn = new int[3 * (5 + (numPlayers / 2))];
-			//itemSpawner.SpawnItems(, ZoneType.LCZ, ItemType.MAJOR_SCIENTIST_KEYCARD);
-			//itemSpawner.SpawnItems()
+			// Assuming max 40 players, 40 radios. 4 keycard spawns. 44 spawns required
+			itemSpawner.SpawnItems(4, ZoneType.LCZ, ItemType.MAJOR_SCIENTIST_KEYCARD);
+			itemSpawner.SpawnItems(numPlayers, ZoneType.LCZ, ItemType.RADIO);
 		}
 
 		public void OnRoundStart(RoundStartEvent ev)
 		{
-			Server.Map.AnnounceCustomMessage("SCP 1 7 3 CONTAINMENT BREACH");
-
-			var d = GameObject.FindObjectOfType<DecontaminationLCZ>() as DecontaminationLCZ;
-			Info(d.announcements[0].startTime.ToString());
-			Info(d.announcements[1].startTime.ToString());
-			Info(d.announcements[2].startTime.ToString());
-
-			const int SCP173HP = 3200;
-
 			roundStarted = true;
 
-			// Open all locked doors
-			var doors = Server.Map.GetDoors();
-			var doorCount = doors.Count;
-			for (int i = 0; i < doorCount; i++)
+			// Delete game start items
+			foreach (var pickup in Pickup.instances)
 			{
-				var door = doors[i].GetComponent() as Door;
-
-				if (door.doorType != 0)
-				{
-					//door.locked = false;
-					door.NetworkisOpen = true;
-				}
+				pickup.Delete();
 			}
 
-			// Send broadcasts
-			var players = Server.GetPlayers();
-			var playerCount = players.Count;
-			int scpDamage = (int)(SCP173HP * (1 - peanutStartHP));
-			for (int i = 0; i < playerCount; i++)
+			var itemSpawner = RandomItemSpawner.RandomItemSpawner.Instance.ItemSpawning;
+			var numPlayers = Server.NumPlayers;
+			itemSpawner.SpawnItems(4, ZoneType.LCZ, ItemType.MAJOR_SCIENTIST_KEYCARD);
+			itemSpawner.SpawnItems(5 + (int)(numPlayers / 1.14f), ZoneType.LCZ, ItemType.RADIO);
+
+			if (skipIntro)
 			{
-				var player = players[i];
-
-				switch (player.TeamRole.Team)
-				{
-					case Smod2.API.Team.SCP:
-						PersonalBroadcast(player, 10, "Snap all the necks. Protip: Hold down left-click while targeting and teleporting to automatically kill if they are in range");
-						player.Damage(scpDamage, DamageType.NONE);
-						break;
-
-					case Smod2.API.Team.CLASSD:
-						PersonalBroadcast(player, 10, "Find a keycard and escape light containment via an elevator. <color=Red>You must have your own keycard to escape.</color>");
-						break;
-				}
+				Timing.RunCoroutine(QuickRoundStart());
+			}
+			else
+			{
+				Timing.RunCoroutine(RoundStart());
 			}
 		}
 
@@ -326,22 +314,6 @@ namespace ArithFeather.ClassDEscape
 
 					Info(Round.Stats.ClassDAlive.ToString());
 
-					PlayerIdConvertedNuts.Add(ev.Player.PlayerId);
-					ev.Player.ChangeRole(Role.SCP_173, true, false);
-
-					var convNuts = playerIdConvertedNuts.Count;
-					var survivors = PlayersReachedElevator.Count;
-					var totalPlayers = Server.NumPlayers;
-
-					if (convNuts == totalPlayers)
-					{
-						Info("SCP Win");
-					}
-					else if (convNuts + survivors == totalPlayers)
-					{
-						// Start Phase 2.
-						Info("Start Phase 2");
-					}
 
 					break;
 
@@ -368,7 +340,7 @@ namespace ArithFeather.ClassDEscape
 					// Force all SCP to be peanut in the beginning.
 					if (ev.TeamRole.Team == Smod2.API.Team.SCP)
 					{
-						ev.Role = Role.SCP_173;
+						//ev.Role = Role.SCP_173;
 					}
 
 					break;
@@ -394,12 +366,12 @@ namespace ArithFeather.ClassDEscape
 
 					ev.AllowUse = false;
 
-					if (ev.Player.TeamRole.Team != Smod2.API.Team.SCP && PlayerIdhaveKeyCard.Contains(ev.Player.PlayerId))
-					{
-						var player = ev.Player;
-						PlayersReachedElevator.Add(new ElevatorPlayer(player, ev.Elevator));
-						player.ChangeRole(Role.SPECTATOR, false, false, false);
-					}
+					//if (ev.Player.TeamRole.Team != Smod2.API.Team.SCP && PlayerIdhaveKeyCard.Contains(ev.Player.PlayerId))
+					//{
+					//	var player = ev.Player;
+					//	PlayersReachedElevator.Add(new ElevatorPlayer(player, ev.Elevator));
+					//	player.ChangeRole(Role.SPECTATOR, false, false, false);
+					//}
 
 					break;
 
@@ -423,40 +395,34 @@ namespace ArithFeather.ClassDEscape
 
 		public void OnPlayerPickupItem(PlayerPickupItemEvent ev)
 		{
-			switch (currentGameState)
-			{
-				case ZoneType.UNDEFINED:
-					break;
+			//switch (currentGameState)
+			//{
+			//	case ZoneType.UNDEFINED:
+			//		break;
 
-				case ZoneType.LCZ:
+			//	case ZoneType.LCZ:
 
-					if (ev.Item.ItemType != ItemType.MAJOR_SCIENTIST_KEYCARD) return;
+			//		if (ev.Item.ItemType != ItemType.MAJOR_SCIENTIST_KEYCARD) return;
 
-					if (PlayerIdhaveKeyCard.Contains(ev.Player.PlayerId))
-					{
-						ev.Allow = false;
-					}
-					else
-					{
-						PlayerIdhaveKeyCard.Add(ev.Player.PlayerId);
-					}
+			//		if (PlayerIdhaveKeyCard.Contains(ev.Player.PlayerId))
+			//		{
+			//			ev.Allow = false;
+			//		}
+			//		else
+			//		{
+			//			PlayerIdhaveKeyCard.Add(ev.Player.PlayerId);
+			//		}
 
-					break;
+			//		break;
 
-				case ZoneType.HCZ:
-					break;
+			//	case ZoneType.HCZ:
+			//		break;
 
-				case ZoneType.ENTRANCE:
-					break;
-				default:
-					break;
-			}
-		}
-
-		public void OnPlayerDropItem(PlayerDropItemEvent ev)
-		{
-			if (ev.Item.ItemType != ItemType.MAJOR_SCIENTIST_KEYCARD) return;
-			ev.Allow = false;
+			//	case ZoneType.ENTRANCE:
+			//		break;
+			//	default:
+			//		break;
+			//}
 		}
 
 		public void OnDoorAccess(PlayerDoorAccessEvent ev)
@@ -468,12 +434,14 @@ namespace ArithFeather.ClassDEscape
 				case 2:
 					ev.Allow = false;
 					break;
-				case 3:
-					ev.Allow = true;
-					break;
 			}
 
-			Info((ev.Door.GetComponent() as Door).doorType.ToString());
+			//Info((ev.Door.GetComponent() as Door).DoorName);
+			//Info((ev.Door.GetComponent() as Door).doorType.ToString());
+			//Info((ev.Door.GetComponent() as Door).name);
+			//Info((ev.Door.GetComponent() as Door).tag);
+			//Info((ev.Door.GetComponent() as Door).transform.parent.name);
+			//Info((ev.Door.GetComponent() as Door).transform.parent.tag);
 		}
 
 		public void OnPlayerHurt(PlayerHurtEvent ev)
@@ -486,20 +454,185 @@ namespace ArithFeather.ClassDEscape
 				}
 				else
 				{
-					ev.Damage *= deconPlayerDamage;
+					ev.Damage *= 0.05f;
+					//deconPlayerDamage;
 				}
 			}
 		}
 
+		public void OnDecontaminate() => Timing.RunCoroutine(KillSCPDecontamination());
 
-		// Custom event if using spawn as class d
-		//private void IndividualSpawns_OnSpawnPlayer(ArithSpawningKit.IndividualSpawns.DeadPlayer player)
-		//{
-		//	if (player.Player.TeamRole.Role == Role.SPECTATOR)
-		//	{
-		//		player.Player.ChangeRole(Role.CLASSD);
-		//	}
-		//}
+		#endregion
+
+		private IEnumerator<float> KillSCPDecontamination()
+		{
+			yield return Timing.WaitForSeconds(10);
+
+			// Unlock doors, open checkpoint?
+			var doors = Server.Map.GetDoors();
+			var doorCount = doors.Count;
+			for (int i = 0; i < doorCount; i++)
+			{
+				var door = doors[i].GetComponent() as Door;
+
+				switch (door.doorType)
+				{
+					case 3:
+						door.NetworkisOpen = true;
+						break;
+
+					case 1:
+					case 2:
+						if (door.locked)
+							door.Networklocked = false;
+						break;
+				}
+			}
+		}
+
+		#region Round Start Coroutines
+
+		private IEnumerator<float> RoundStart()
+		{
+			const int SCP173HP = 3200;
+
+			Server.Map.AnnounceCustomMessage("UNAUTHORIZED ACCESS . . WARNING . SCP 0 7 . . . . PASSWORD ACCEPTED . ACCESS GRANTED . IN INSTALLING SOFTWARE . . . . . . COMPLETED . CRITICAL MALFUNCTION CORRUPTED DATA MEMORY UNSTABLE FACILITY IS NOW ON LOCKDOWN DOWN CORE OR ME ME ME");
+
+			yield return Timing.WaitForSeconds(TimeUntilClassDLightFlicker);
+
+			// Unlock/open class d. open locked doors
+			var doors = Server.Map.GetDoors();
+			var doorCount = doors.Count;
+			for (int i = 0; i < doorCount; i++)
+			{
+				var door = doors[i].GetComponent() as Door;
+
+				if (door.doorType == 0 && door.name.StartsWith("PrisonDoor"))
+				{
+					door.Networklocked = false;
+					door.NetworkisOpen = true;
+				}
+			}
+
+			// Send broadcasts and lower SCP hp
+			var players = Server.GetPlayers();
+			var playerCount = players.Count;
+			int scpDamage = (int)(SCP173HP * (1 - peanutStartHP));
+			for (int i = 0; i < playerCount; i++)
+			{
+				var player = players[i];
+
+				switch (player.TeamRole.Team)
+				{
+					case Smod2.API.Team.SCP:
+						PersonalBroadcast(player, 10, "Your health has been lowered to increase your speed.");
+						player.Damage(scpDamage, DamageType.NONE);
+						break;
+
+					case Smod2.API.Team.CLASSD:
+						PersonalBroadcast(player, 10, "Find a keycard and escape light containment via an elevator.");
+						break;
+				}
+			}
+
+			yield return Timing.WaitForSeconds(TimeUntilIntroduction);
+
+
+			Server.Map.AnnounceCustomMessage(". . . . . I AM S C P 0 7 9 . . . YOU WILL ALL BE EXECUTED . . . SCP 1 7 3 CONTAINMENT BREACH");
+
+			yield return Timing.WaitForSeconds(TimeUntil173);
+
+			// Flicker lights
+			var rooms = Server.Map.Get079InteractionRooms(Scp079InteractionType.CAMERA);
+			foreach (var item in rooms)
+			{
+				if (item.ZoneType == ZoneType.LCZ)
+				{
+					item.FlickerLights();
+				}
+			}
+
+			// Open Locked doors and peanut
+			for (int i = 0; i < doorCount; i++)
+			{
+				var door = doors[i].GetComponent() as Door;
+
+				if (door.doorType == 2 || door.doorType == 0 && door.transform.parent.name == "MeshDoor173")
+				{
+					door.NetworkisOpen = true;
+				}
+			}
+		}
+
+		private IEnumerator<float> QuickRoundStart()
+		{
+			const int SCP173HP = 3200;
+
+			// Unlock/open class d. open locked doors
+			var doors = Server.Map.GetDoors();
+			var doorCount = doors.Count;
+			for (int i = 0; i < doorCount; i++)
+			{
+				var door = doors[i].GetComponent() as Door;
+
+				if (door.doorType == 0 && door.name.StartsWith("PrisonDoor"))
+				{
+					door.Networklocked = false;
+					door.NetworkisOpen = true;
+				}
+			}
+
+			// Send broadcasts and lower SCP hp
+			var players = Server.GetPlayers();
+			var playerCount = players.Count;
+			int scpDamage = (int)(SCP173HP * (1 - peanutStartHP));
+			for (int i = 0; i < playerCount; i++)
+			{
+				var player = players[i];
+
+				switch (player.TeamRole.Team)
+				{
+					case Smod2.API.Team.SCP:
+						PersonalBroadcast(player, 10, "Your health has been lowered to increase your speed.");
+						player.Damage(scpDamage, DamageType.NONE);
+						break;
+
+					case Smod2.API.Team.CLASSD:
+						PersonalBroadcast(player, 10, "Find a keycard and escape light containment via an elevator.");
+						break;
+				}
+			}
+
+			yield return Timing.WaitForSeconds(TimeUntilIntroduction + TimeUntil173);
+
+			Server.Map.AnnounceCustomMessage("SCP 1 7 3 CONTAINMENT BREACH");
+
+			// Flicker lights
+			var rooms = Server.Map.Get079InteractionRooms(Scp079InteractionType.CAMERA);
+			foreach (var item in rooms)
+			{
+				if (item.ZoneType == ZoneType.LCZ)
+				{
+					item.FlickerLights();
+				}
+			}
+
+			// Open Locked doors and peanut
+			for (int i = 0; i < doorCount; i++)
+			{
+				var door = doors[i].GetComponent() as Door;
+
+				if (door.doorType == 2 || door.doorType == 0 && door.transform.parent.name == "MeshDoor173")
+				{
+					door.NetworkisOpen = true;
+				}
+			}
+
+			yield return Timing.WaitForSeconds(TimeUntilDecontam);
+
+			(GameObject.Find("Host").GetComponent<DecontaminationLCZ>() as DecontaminationLCZ).time = 704.4f;
+			//(GameObject.Find("Host").GetComponent<DecontaminationLCZ>() as DecontaminationLCZ).time = 438f;
+		}
 
 		#endregion
 

@@ -37,6 +37,9 @@
     <Reference Include="Assembly-CSharp">
       <HintPath>..\Packages\Assembly-CSharp.dll</HintPath>
     </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>..\Packages\Assembly-CSharp-firstpass.dll</HintPath>
+    </Reference>
     <Reference Include="RandomItemSpawner">
       <HintPath>..\RandomItemSpawner\obj\Debug\RandomItemSpawner.dll</HintPath>
     </Reference>
