@@ -92,14 +92,13 @@ namespace ArithFeather.ClassDEscape
 
 		private readonly FieldInfo cachedPlayerConnFieldInfo = typeof(SmodPlayer).GetField("conn", BindingFlags.NonPublic | BindingFlags.Instance);
 
-		//+ Round Data
-
-		private int generatorsActivated;
-		private bool roundStarted;
-		private Broadcast cachedBroadcast;
-		private float deconPlayerDamage;
+		//++ Round Data
 
 		private ZoneType currentGameState;
+		private bool roundStarted;
+		private Broadcast cachedBroadcast;
+
+		//+ Phase 1		
 
 		private List<ElevatorPlayer> playersReachedElevator;
 		private List<ElevatorPlayer> PlayersReachedElevator => playersReachedElevator ?? (playersReachedElevator = new List<ElevatorPlayer>());
@@ -116,18 +115,18 @@ namespace ArithFeather.ClassDEscape
 			}
 		}
 
+		//+ Phase 2
+
+		private int generatorsActivated;
+
+
 		// Plugin Methods
 
 		public override void OnDisable() => Info(Details.name + " was disabled");
 		public override void OnEnable() => Info($"{Details.name} has loaded, type 'fe' for details.");
-		public override void Register()
-		{
-			AddEventHandlers(this, Priority.Lowest);
-		}
+		public override void Register() => AddEventHandlers(this);
 
-		#region Events
-
-		public void OnCheckEscape(PlayerCheckEscapeEvent ev) => ev.AllowEscape = false;
+		#region Start Events
 
 		public void OnSetConfig(SetConfigEvent ev)
 		{
@@ -152,67 +151,9 @@ namespace ArithFeather.ClassDEscape
 			}
 		}
 
-		public void OnCallCommand(PlayerCallCommandEvent ev)
-		{
-			Server.Map.AnnounceCustomMessage(ev.Command);
-
-
-			//switch (ev.Command.ToUpper())
-			//{
-			//	case "HELP":
-			//		break;
-			//}
-		}
-
-		public void OnPlayerJoin(PlayerJoinEvent ev)
-		{
-			if (showGameStartMessage)
-			{
-				//try
-				//{
-				//	PersonalBroadcast(ev.Player, 8,
-				//		$"<size={ServerInfoSize}><color={ServerInfoColor}>Welcome to <color={ServerHighLightColor}>Scattered Survival v{ModVersion}!</color> Press ` to open the console and enter '<color={ServerHighLightColor}>.help</color>' for mod information!</color></size>");
-				//	PersonalBroadcast(ev.Player, 8,
-				//		$"<size={ServerInfoSize}><color={ServerInfoColor}>If you like the plugin, join the discord for updates!\n <color={ServerHighLightColor}>https://discord.gg/DunUU82</color></color></size>");
-				//}
-				//catch
-				//{
-				//	Info("Null ref on joining player. Ignoring...");
-				//}
-			}
-
-			if (roundStarted)
-			{
-				switch (currentGameState)
-				{
-					case ZoneType.UNDEFINED:
-						break;
-
-					case ZoneType.LCZ:
-
-						var eles = Server.Map.GetElevators();
-						for (int i = 0; i < eles.Count; i++)
-						{
-							var el = eles[i];
-							if (el.ElevatorType == ElevatorType.LiftA || el.ElevatorType == ElevatorType.LiftB)
-							{
-								PlayersReachedElevator.Add(new ElevatorPlayer(ev.Player, el));
-								break;
-							}
-						}
-
-						break;
-
-					case ZoneType.HCZ:
-						break;
-					case ZoneType.ENTRANCE:
-						break;
-					default:
-						break;
-				}
-			}
-		}
-
+		/// <summary>
+		/// Reset values here per round
+		/// </summary>
 		public void OnWaitingForPlayers(WaitingForPlayersEvent ev)
 		{
 			if (disablePlugin)
@@ -227,7 +168,6 @@ namespace ArithFeather.ClassDEscape
 			PlayersReachedElevator.Clear();
 			currentGameState = ZoneType.LCZ;
 			RandomItemSpawner.RandomItemSpawner.Instance.UseDefaultEvents = false;
-			deconPlayerDamage = (float)(100 / (deconKillTime / 0.265));
 
 			// Lock Class D Doors
 			var doors = Server.Map.GetDoors();
@@ -241,6 +181,7 @@ namespace ArithFeather.ClassDEscape
 				}
 			}
 
+			//todo using individual player spawns?
 			//var individualSpawns = ArithSpawningKit.IndividualSpawns.IndividualSpawns.Instance;
 			//individualSpawns.DisablePlugin = false;
 			//individualSpawns.OnSpawnPlayer += IndividualSpawns_OnSpawnPlayer;
@@ -252,7 +193,7 @@ namespace ArithFeather.ClassDEscape
 			var numPlayers = Server.NumPlayers;
 			// 10 rooms total = spawn 5 cards for 50% chance to find one when two player.
 			// 21 item spawn points - lets include the old player random spawns.
-			// Assuming max 40 players, 40 radios. 4 keycard spawns. 44 spawns required
+			//+ Assuming max 40 players, 40 radios. 4 keycard spawns. 44 spawns required
 			itemSpawner.SpawnItems(3, ZoneType.LCZ, ItemType.MAJOR_SCIENTIST_KEYCARD);
 			itemSpawner.SpawnItems(numPlayers, ZoneType.LCZ, ItemType.RADIO);
 		}
@@ -282,6 +223,70 @@ namespace ArithFeather.ClassDEscape
 			}
 		}
 
+		#endregion
+
+		public void OnPlayerJoin(PlayerJoinEvent ev)
+		{
+			if (showGameStartMessage)
+			{
+				//try
+				//{
+				//	PersonalBroadcast(ev.Player, 8,
+				//		$"<size={ServerInfoSize}><color={ServerInfoColor}>Welcome to <color={ServerHighLightColor}>Scattered Survival v{ModVersion}!</color> Press ` to open the console and enter '<color={ServerHighLightColor}>.help</color>' for mod information!</color></size>");
+				//	PersonalBroadcast(ev.Player, 8,
+				//		$"<size={ServerInfoSize}><color={ServerInfoColor}>If you like the plugin, join the discord for updates!\n <color={ServerHighLightColor}>https://discord.gg/DunUU82</color></color></size>");
+				//}
+				//catch
+				//{
+				//	Info("Null ref on joining player. Ignoring...");
+				//}
+			}
+
+			if (roundStarted)
+			{
+				switch (currentGameState)
+				{
+					case ZoneType.UNDEFINED:
+						break;
+
+					case ZoneType.LCZ:
+
+						// Move to next phase
+						var eles = Server.Map.GetElevators();
+						for (int i = 0; i < eles.Count; i++)
+						{
+							var el = eles[i];
+							if (el.ElevatorType == ElevatorType.LiftA || el.ElevatorType == ElevatorType.LiftB)
+							{
+								PlayersReachedElevator.Add(new ElevatorPlayer(ev.Player, el));
+								break;
+							}
+						}
+
+						break;
+
+					case ZoneType.HCZ:
+						break;
+					case ZoneType.ENTRANCE:
+						break;
+					default:
+						break;
+				}
+			}
+		}
+
+		public void OnCallCommand(PlayerCallCommandEvent ev)
+		{
+			Server.Map.AnnounceCustomMessage(ev.Command);
+
+
+			//switch (ev.Command.ToUpper())
+			//{
+			//	case "HELP":
+			//		break;
+			//}
+		}
+
 		public void OnTeamRespawn(TeamRespawnEvent ev)
 		{
 			switch (currentGameState)
@@ -290,6 +295,9 @@ namespace ArithFeather.ClassDEscape
 					break;
 
 				case ZoneType.LCZ:
+
+					ev.PlayerList.Clear();
+
 					break;
 
 				case ZoneType.HCZ:
@@ -313,7 +321,6 @@ namespace ArithFeather.ClassDEscape
 				case ZoneType.LCZ:
 
 					Info(Round.Stats.ClassDAlive.ToString());
-
 
 					break;
 
@@ -340,7 +347,7 @@ namespace ArithFeather.ClassDEscape
 					// Force all SCP to be peanut in the beginning.
 					if (ev.TeamRole.Team == Smod2.API.Team.SCP)
 					{
-						//ev.Role = Role.SCP_173;
+						ev.Role = Role.SCP_173;
 					}
 
 					break;
@@ -352,8 +359,6 @@ namespace ArithFeather.ClassDEscape
 			}
 		}
 
-		public void On079AddExp(Player079AddExpEvent ev) => ev.ExpToAdd *= expMultiplier;
-		public void OnGeneratorFinish(GeneratorFinishEvent ev) => generatorsActivated++;
 
 		public void OnElevatorUse(PlayerElevatorUseEvent ev)
 		{
@@ -366,6 +371,7 @@ namespace ArithFeather.ClassDEscape
 
 					ev.AllowUse = false;
 
+					//todo set up end of phase 1
 					//if (ev.Player.TeamRole.Team != Smod2.API.Team.SCP && PlayerIdhaveKeyCard.Contains(ev.Player.PlayerId))
 					//{
 					//	var player = ev.Player;
@@ -427,12 +433,21 @@ namespace ArithFeather.ClassDEscape
 
 		public void OnDoorAccess(PlayerDoorAccessEvent ev)
 		{
-			var door = ev.Door.GetComponent() as Door;
-
-			switch (door.doorType)
+			switch (currentGameState)
 			{
-				case 2:
-					ev.Allow = false;
+				case ZoneType.UNDEFINED:
+					break;
+				case ZoneType.LCZ:
+					if ((ev.Door.GetComponent() as Door).doorType == 1)
+					{
+						ev.Allow = false;
+					}
+					break;
+				case ZoneType.HCZ:
+					break;
+				case ZoneType.ENTRANCE:
+					break;
+				default:
 					break;
 			}
 
@@ -446,23 +461,41 @@ namespace ArithFeather.ClassDEscape
 
 		public void OnPlayerHurt(PlayerHurtEvent ev)
 		{
-			if (ev.DamageType == DamageType.DECONT)
+			switch (currentGameState)
 			{
-				if (ev.Player.TeamRole.Team == Smod2.API.Team.SCP)
-				{
-					ev.Damage *= 10;
-				}
-				else
-				{
-					ev.Damage *= 0.05f;
-					//deconPlayerDamage;
-				}
+				case ZoneType.UNDEFINED:
+					break;
+
+				case ZoneType.LCZ:
+
+					if (ev.DamageType == DamageType.DECONT)
+					{
+						if (ev.Player.TeamRole.Team == Smod2.API.Team.SCP)
+						{
+							ev.Damage *= 10;
+						}
+						else
+						{
+							//todo sup up damage skipping since damage can't be less than 1.
+							ev.Damage *= 0.05f;
+							//deconPlayerDamage;
+						}
+					}
+
+					break;
+
+				case ZoneType.HCZ:
+					break;
+				case ZoneType.ENTRANCE:
+					break;
+				default:
+					break;
 			}
 		}
 
-		public void OnDecontaminate() => Timing.RunCoroutine(KillSCPDecontamination());
+		#region Phase 1
 
-		#endregion
+		public void OnDecontaminate() => Timing.RunCoroutine(KillSCPDecontamination());
 
 		private IEnumerator<float> KillSCPDecontamination()
 		{
@@ -489,8 +522,6 @@ namespace ArithFeather.ClassDEscape
 				}
 			}
 		}
-
-		#region Round Start Coroutines
 
 		private IEnumerator<float> RoundStart()
 		{
@@ -636,6 +667,12 @@ namespace ArithFeather.ClassDEscape
 
 		#endregion
 
+		#region Phase 2
+
+		public void On079AddExp(Player079AddExpEvent ev) => ev.ExpToAdd *= expMultiplier;
+
+		public void OnGeneratorFinish(GeneratorFinishEvent ev) => generatorsActivated++;
+
 		/// <summary>
 		/// Change SCP
 		/// teleport/open door for players? - will see.
@@ -668,6 +705,14 @@ namespace ArithFeather.ClassDEscape
 				player.ChangeRole(Role.CLASSD, false, false, false);
 			}
 		}
+
+		#endregion
+
+		#region Phase 3
+
+		public void OnCheckEscape(PlayerCheckEscapeEvent ev) => ev.AllowEscape = false;
+
+		#endregion
 
 
 		#region Custom Broadcasts
