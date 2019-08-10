@@ -61,7 +61,7 @@ namespace ArithFeather.ClassDEscape
 
 		private const float TimeUntilClassDLightFlicker = 29.5f;
 		private const float TimeUntilIntroduction = 5f;
-		private const float TimeUntil173 = 15f; // 20 seconds after freedom
+		private const float TimeUntil173 = 16f; // 21 seconds after freedom
 		private const float TimeUntilDecontam = 8f;
 
 		private const float TotalTimeUntil173 = TimeUntilClassDLightFlicker + TimeUntilIntroduction + TimeUntil173;
@@ -88,7 +88,7 @@ namespace ArithFeather.ClassDEscape
 		[ConfigOption] private readonly float expMultiplier = 50f;
 		[ConfigOption] private readonly float peanutStartHP = 0.5f;
 		[ConfigOption] private readonly float deconKillTime = 120f;
-		[ConfigOption] private readonly bool skipIntro = true;
+		[ConfigOption] private readonly bool skipIntro = false;
 
 		private readonly FieldInfo cachedPlayerConnFieldInfo = typeof(SmodPlayer).GetField("conn", BindingFlags.NonPublic | BindingFlags.Instance);
 
@@ -253,7 +253,7 @@ namespace ArithFeather.ClassDEscape
 			// 10 rooms total = spawn 5 cards for 50% chance to find one when two player.
 			// 21 item spawn points - lets include the old player random spawns.
 			// Assuming max 40 players, 40 radios. 4 keycard spawns. 44 spawns required
-			itemSpawner.SpawnItems(4, ZoneType.LCZ, ItemType.MAJOR_SCIENTIST_KEYCARD);
+			itemSpawner.SpawnItems(3, ZoneType.LCZ, ItemType.MAJOR_SCIENTIST_KEYCARD);
 			itemSpawner.SpawnItems(numPlayers, ZoneType.LCZ, ItemType.RADIO);
 		}
 
@@ -538,7 +538,7 @@ namespace ArithFeather.ClassDEscape
 			yield return Timing.WaitForSeconds(TimeUntilIntroduction);
 
 
-			Server.Map.AnnounceCustomMessage(". . . . . I AM S C P 0 7 9 . . . YOU WILL ALL BE EXECUTED . . . SCP 1 7 3 CONTAINMENT BREACH");
+			Server.Map.AnnounceCustomMessage(". . . . . I AM S C P 0 7 9 . . . YOU WILL ALL BE EXECUTED . . . . . . . . . SCP 1 7 3 CONTAINMENT BREACH");
 
 			yield return Timing.WaitForSeconds(TimeUntil173);
 
