@@ -14,28 +14,23 @@ using MEC;
 
 /// <summary>
 /// -before start-
-/// Decontamination 5 minutes.
-/// Spawn cards, radios, and health kits.
-/// All locked doors are forced Open, players can not close them, but can always open checkpoint.
-/// 
-/// -start-
-/// Broadcast message
+/// Removed original game spawns. Spawn cards and radios.
 /// 
 /// -game play-
 /// -Phase 1-
-/// No respawns. Dead players respawn as nuts.
-/// Player can only pick up _one_ keycard. Player can not drop the keycard.
-/// broadcast on keycard pickup. broadcast on elevator. broadcast on death.
-/// Check end game or end first phase on death
+/// Intro sequence
+/// All locked doors are forced Open, players can not close them
+/// Decontamination 5 minutes.
+/// No respawns. Players joining move to phase 2.
 /// if player joins late, move them to phase 2
 /// 
 /// -Phase 2-
-/// Can't go back to LCZ.
 /// 
 /// -todo-
-/// Anti-Camp - Kill SCP173 a minute before players die?
+/// Check end game or end first phase on death
+/// Broadcast on elevator.
+/// Check end game or end first phase on death
 /// remove ammo packs on death
-/// remove default spawns
 /// add way more spawn points
 /// </summary>
 namespace ArithFeather.ClassDEscape
@@ -472,7 +467,7 @@ namespace ArithFeather.ClassDEscape
 					{
 						if (ev.Player.TeamRole.Team == Smod2.API.Team.SCP)
 						{
-							ev.Damage *= 10;
+							ev.Damage = 20;
 						}
 						else
 						{
@@ -561,7 +556,7 @@ namespace ArithFeather.ClassDEscape
 						break;
 
 					case Smod2.API.Team.CLASSD:
-						PersonalBroadcast(player, 10, "Find a keycard and escape light containment via an elevator.");
+						PersonalBroadcast(player, 10, "Work together to escape light containment via an elevator.");
 						break;
 				}
 			}
@@ -629,7 +624,7 @@ namespace ArithFeather.ClassDEscape
 						break;
 
 					case Smod2.API.Team.CLASSD:
-						PersonalBroadcast(player, 10, "Find a keycard and escape light containment via an elevator.");
+						PersonalBroadcast(player, 10, "Work together to escape light containment via an elevator.");
 						break;
 				}
 			}
