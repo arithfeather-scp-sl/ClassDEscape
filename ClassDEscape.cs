@@ -45,7 +45,7 @@ using System.Text;
 /// Idea** Make it the SCP's job to turn off the nuke. Set off nuke on generators down?
 /// make sure SCP079 can't close certain doors.
 /// remove ammo packs on death
-/// SCP spawning in elevator bug.
+/// Make SCP173 release time changable
 /// change to HCZ only, change generators to use cassie announcements?
 /// make is so cards respawn in light when a player with a card leaves
 /// Fix item broken spawns in lockers.
@@ -95,7 +95,7 @@ namespace ArithFeather.ClassDEscape
 		[ConfigOption] private readonly bool skipIntro = false;
 		[ConfigOption] private readonly int endScreenSpeed = 10;
 		[ConfigOption] private readonly float escapeTimerMinutes = 30f;
-		[ConfigOption] private readonly float timeReductionPerGeneratorMinutes = 5f; // at 5 generators = 6 seconds per second = 3.33 minutes
+		[ConfigOption] private readonly float timeReductionPerGeneratorMinutes = 5f;
 
 		private readonly FieldInfo cachedPlayerConnFieldInfo = typeof(SmodPlayer).GetField("conn", BindingFlags.NonPublic | BindingFlags.Instance);
 
@@ -103,11 +103,13 @@ namespace ArithFeather.ClassDEscape
 
 		private ZoneType currentGameState;
 		private bool roundStarted;
+
 		private Broadcast cachedBroadcast;
 		private List<Door> cachedDoors;
 		private List<Door> CachedDoors => cachedDoors ?? (cachedDoors = new List<Door>());
 		private GameObject cachedHost;
 		private Room[] cachedRooms;
+		private Vector cached173DoorPos;
 
 		//+ Phase 1
 
@@ -195,7 +197,8 @@ namespace ArithFeather.ClassDEscape
 					ev.Value = false;
 					break;
 				case "173_door_starting_cooldown":
-					// Can't be edited because built into voice.
+					//todo 
+					// Can't be edited because built into voice. I need to make the audio longer by 1 second = 1 period. (Fix this later)
 					ev.Value = (int)TotalTimeUntil173;
 					break;
 
@@ -253,13 +256,13 @@ namespace ArithFeather.ClassDEscape
 			// Cache HCZ rooms for flicker lights
 			foreach (var room in cachedRooms)
 			{
-				if (room.ZoneType == ZoneType.HCZ)
+				if (room.ZoneType == ZoneType.HCZ && room.RoomType != RoomType.UNDEFINED)
 				{
 					CachedHCZRooms.Add(room);
 				}
 			}
 
-			// Lock Class D Doors and cache game doors
+			// Lock Class D Doors and cache for later opening
 			var doors = Server.Map.GetDoors();
 			var doorCount = doors.Count;
 			for (int i = 0; i < doorCount; i++)
@@ -468,10 +471,12 @@ namespace ArithFeather.ClassDEscape
 
 		public void OnCallCommand(PlayerCallCommandEvent ev)
 		{
+			// Testing Announcements
 			if (ev.Player.GetRankName().ToUpper() == "OWNER")
 				Server.Map.AnnounceCustomMessage(ev.Command);
 
 
+			//todo display game help
 			//switch (ev.Command.ToUpper())
 			//{
 			//	case "HELP":
@@ -838,9 +843,14 @@ namespace ArithFeather.ClassDEscape
 			{
 				var door = CachedDoors[i];
 
-				if (door.doorType == 2 || door.doorType == 0 && door.transform.parent.name == "MeshDoor173")
+				if (door.doorType == 2)
 				{
 					door.NetworkisOpen = true;
+				}
+				else if (door.doorType == 0 && door.transform.parent.name == "MeshDoor173")
+				{
+					door.NetworkisOpen = true;
+					cached173DoorPos = Tools.Vec3ToVec(door.localPos);
 				}
 			}
 		}
@@ -887,6 +897,15 @@ namespace ArithFeather.ClassDEscape
 
 		private IEnumerator<float> StartPhase2()
 		{
+			// Change SCP to doggo/Comp
+			var nuts = Server.GetPlayers(Smod2.API.Team.SCP);
+			var nutCount = nuts.Count;
+
+			for (int i = 0; i < nutCount; i++)
+			{
+				nuts[i].Teleport(cached173DoorPos);
+			}
+
 			currentGameState = ZoneType.HCZ;
 
 			var decon = cachedHost.GetComponent<DecontaminationLCZ>() as DecontaminationLCZ;
@@ -981,13 +1000,13 @@ namespace ArithFeather.ClassDEscape
 
 			//todo testing
 			// Change SCP to doggo/Comp
-			var nuts = Server.GetPlayers(Smod2.API.Team.SCP);
-			var nutCount = nuts.Count;
+			nuts = Server.GetPlayers(Smod2.API.Team.SCP);
+			nutCount = nuts.Count;
 
 			// Spawn SCP079 instead of doggo if 2 or more SCP present.
 			nuts[0].ChangeRole(nutCount > 1 ? Role.SCP_079 : UnityEngine.Random.Range(0f, 1f) > 0.5f ? Role.SCP_939_53 : Role.SCP_939_89);
 
-			for (int i = 0; i < nutCount; i++)
+			for (int i = 1; i < nutCount; i++)
 			{
 				nuts[i].ChangeRole(UnityEngine.Random.Range(0f, 1f) > 0.5f ? Role.SCP_939_53 : Role.SCP_939_89);
 			}
