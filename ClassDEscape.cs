@@ -289,7 +289,7 @@ namespace ArithFeather.ClassDEscape
 			}
 
 			var itemSpawner = RandomItemSpawner.RandomItemSpawner.Instance.ItemSpawning;
-			var numPlayers = Server.NumPlayers;
+			var numPlayers = Server.NumPlayers - 1;
 
 			const float ratio = 0.834f; // 5/6
 			var averageSpawnCount = 5 + (int)(numPlayers / ratio); // 30 = 30 || 10 = 13
@@ -653,7 +653,7 @@ namespace ArithFeather.ClassDEscape
 
 		private const float TimeUntilStart = 29.5f;
 		private const float TimeUntilIntroduction = 5f;
-		private const float TimeUntil173 = 16f; // 21 seconds after freedom
+		private const float TimeUntil173 = 20f;
 		private const float TimeUntilDecontam = 8f;
 		private const float TotalTimeUntil173 = TimeUntilStart + TimeUntilIntroduction + TimeUntil173;
 
@@ -766,7 +766,7 @@ namespace ArithFeather.ClassDEscape
 
 			yield return Timing.WaitForSeconds(TimeUntilIntroduction);
 
-			Server.Map.AnnounceCustomMessage(". . . . . I AM S C P 0 7 9 . . . YOU WILL ALL BE EXECUTED . . . . . . . . . SCP 1 7 3 CONTAINMENT BREACH");
+			Server.Map.AnnounceCustomMessage(". . . . . I AM S C P 0 7 9 . . . YOU WILL ALL BE EXECUTED . . . . . . . . . . . . . . . . . SCP 1 7 3 CONTAINMENT BREACH");
 
 			yield return Timing.WaitForSeconds(TimeUntil173);
 
