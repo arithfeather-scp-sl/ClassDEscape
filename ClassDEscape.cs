@@ -49,20 +49,15 @@ using System.Text;
 /// 
 /// -todo-
 /// fix round endings
-/// get rid of generator announcements, make my own.
 /// remove ammo packs on death
-/// change generators to use cassie announcements?
-/// Fix item broken spawns in lockers.
 /// Less final ending. Give scores "You killed this many""This many escaped" "MVP" "MOST KILLS" SURVIVED LONGEST" "ESCAPED" etc.
 /// 
 /// -low priority-
 /// Make 914 useful.
 /// 
 /// -Ideas-
-/// respawn dead guys every phase with shared life pool - decontamination ending?
-/// phase 2/3 split - 2 activate gens to open chkpnt. 3 - find key and escape through exit
-/// Respawn dead survivors?
-/// Idea** Make it the SCP's job to turn off the nuke. Set off nuke on generators down?
+/// Set good item spawn locations
+/// 
 /// </summary>
 namespace ArithFeather.ClassDEscape
 {
@@ -81,8 +76,8 @@ namespace ArithFeather.ClassDEscape
 		IEventHandlerPlayerJoin, IEventHandlerElevatorUse, IEventHandlerDoorAccess, IEventHandler106CreatePortal,
 		IEventHandlerCheckEscape, IEventHandlerRoundStart, IEventHandlerCallCommand, IEventHandler079AddExp,
 		IEventHandlerGeneratorFinish, IEventHandlerPlayerDie, IEventHandlerDisconnect, IEventHandlerSCP914ChangeKnob,
-		IEventHandlerTeamRespawn, IEventHandlerPlayerHurt, IEventHandlerLCZDecontaminate, IEventHandler079LevelUp,
-		IEventHandlerLateUpdate, IEventHandler079Door, IEventHandlerWarheadChangeLever
+		IEventHandlerPlayerHurt, IEventHandlerLCZDecontaminate, IEventHandler079Door, IEventHandlerWarheadChangeLever,
+		IEventHandlerWarheadStopCountdown, IEventHandlerPocketDimensionDie, IEventHandlerPocketDimensionExit
 	{
 		public const string ModVersion = "1.0";
 
@@ -162,20 +157,16 @@ namespace ArithFeather.ClassDEscape
 		}
 
 		private readonly FieldInfo curAnmInfo = typeof(DecontaminationLCZ).GetField("curAnm", BindingFlags.NonPublic | BindingFlags.Instance);
+		private readonly FieldInfo genLocalTimeInfo = typeof(Generator079).GetField("localTime", BindingFlags.NonPublic | BindingFlags.Instance);
 
 		//+ Phase 2
 
 		private int flickerTimer;
 		private int escapeTimer;
 		private int currentAnnouncement;
-		private Scp079PlayerScript scp079;
-		private bool clampMana;
 		private Generator079 cachedGenerator;
-		private int level;
-		/// <summary>
-		/// Note max mana can't be more than 39.
-		/// </summary>
-		private float MaxMana;
+		private int generatorCount;
+
 
 		private Announcement[] announcements = new Announcement[]
 		{
@@ -205,6 +196,11 @@ namespace ArithFeather.ClassDEscape
 			}
 		}
 
+		//+ Phase 3
+
+		private List<Door> cachedExplosiveDoors;
+		private List<Door> CachedExplosiveDoors => cachedExplosiveDoors ?? (cachedExplosiveDoors = new List<Door>());
+
 		// Plugin Methods
 
 		public override void OnDisable() => Info(Details.name + " was disabled");
@@ -229,13 +225,16 @@ namespace ArithFeather.ClassDEscape
 				case "smart_class_picker":
 					ev.Value = false;
 					break;
-				case "silence that bitch":
-					ev.Value = true;
+				case "cassie_generator_announcements":
+					ev.Value = false;
+					break;
+				case "maximum_MTF_respawn_amount":
+					ev.Value = 0;
 					break;
 
 				// Editable configs
-				case "disable_decontamination": //todo false
-					if (useDefaultConfig) ev.Value = true;
+				case "disable_decontamination":
+					if (useDefaultConfig) ev.Value = false;
 					break;
 
 				case "decontamination_time":
@@ -304,13 +303,15 @@ namespace ArithFeather.ClassDEscape
 			}
 
 			// Phase 2
-			escapeTimer = (int)(escapeTimerMinutes * 60);
-			clampMana = false;
 			cachedGenerator = Server.Map.GetGenerators()[0].GetComponent() as Generator079;
+			generatorCount = 0;
 
 			CachedDoors.Clear();
 			CachedPrisonDoors.Clear();
+			CachedExplosiveDoors.Clear();
 			// Lock Class D Doors and cache for later opening
+			// Cache scp173 door
+			// Cache hcz doors for exploding
 			var doors = Server.Map.GetDoors();
 			var doorCount = doors.Count;
 			bool found173Door = false;
@@ -327,6 +328,18 @@ namespace ArithFeather.ClassDEscape
 					found173Door = true;
 					cached173Door = door;
 					door.Networklocked = true;
+				}
+				else if (door.doorType == 0)
+				{
+					Scp079Interactable component = door.GetComponent<Scp079Interactable>();
+					if (component != null)
+					{
+						Scp079Interactable.ZoneAndRoom zoneAndRoom = component.currentZonesAndRooms[0];
+						if (zoneAndRoom.currentZone == "HeavyRooms")
+						{
+							CachedExplosiveDoors.Add(door);
+						}
+					}
 				}
 
 				CachedDoors.Add(door);
@@ -408,10 +421,13 @@ namespace ArithFeather.ClassDEscape
 
 			//todo testing below - instant start phase 2
 
-			var p = Server.GetPlayers(Role.CLASSD)[0];
-			OnPlayerJoin(new PlayerJoinEvent(p));
-			p.ChangeRole(Role.SPECTATOR, false, false, false);
-			CheckEndPhase1(0);
+			//var p = Server.GetPlayers(Role.CLASSD)[0];
+			//OnPlayerJoin(new PlayerJoinEvent(p));
+			//p.ChangeRole(Role.SPECTATOR, false, false, false);
+			//CheckEndPhase1(0);
+
+			//todo testing phase 3
+			Timing.RunCoroutine(Phase3());
 		}
 
 		#endregion
@@ -483,8 +499,6 @@ namespace ArithFeather.ClassDEscape
 
 						RemoveNullElePlayer(); // Check here incase
 
-						if (clampMana && scp079 == null) clampMana = false; // Check SCP079 disconnect
-
 						CheckEndPhase2(false);
 
 						break;
@@ -519,6 +533,31 @@ namespace ArithFeather.ClassDEscape
 			//	Server.Map.AnnounceCustomMessage(ev.Command);
 
 
+			var levels = (ev.Player.GetGameObject() as GameObject).GetComponent<Scp079PlayerScript>().levels;
+
+			for (int i = 0; i < levels.Length; i++)
+			{
+				var level = levels[i];
+
+				switch (i)
+				{
+					case 0:
+						level.maxMana = 10;
+						break;
+					case 1:
+						level.maxMana = 15;
+						break;
+					case 2:
+						level.maxMana = 25;
+						break;
+					case 3:
+						level.maxMana = 30;
+						break;
+					case 4:
+						level.maxMana = 35;
+						break;
+				}
+			}
 			//if (ev.Command == "tp")
 			//{
 			//	Timing.RunCoroutine(TeleportLarry(ev.Player));
@@ -533,8 +572,6 @@ namespace ArithFeather.ClassDEscape
 			//		break;
 			//}
 		}
-
-		public void OnTeamRespawn(TeamRespawnEvent ev) => ev.PlayerList.Clear();
 
 		public void OnPlayerDie(PlayerDeathEvent ev)
 		{
@@ -580,13 +617,19 @@ namespace ArithFeather.ClassDEscape
 					break;
 
 				case ZoneType.HCZ:
+
+					//Set SCP079 stats
+					if (ev.Role == Role.SCP_079)
+					{
+						Timing.RunCoroutine(SetSCP079Stats(ev.Player));
+					}
+
 					break;
 
 				case ZoneType.ENTRANCE:
 					break;
 			}
 		}
-
 
 		public void OnElevatorUse(PlayerElevatorUseEvent ev)
 		{
@@ -670,7 +713,7 @@ namespace ArithFeather.ClassDEscape
 				case ZoneType.ENTRANCE:
 					break;
 			}
-			
+
 			//Info((ev.Door.GetComponent() as Door).DoorName);
 			//Info((ev.Door.GetComponent() as Door).doorType.ToString());
 			//Info((ev.Door.GetComponent() as Door).name);
@@ -706,6 +749,10 @@ namespace ArithFeather.ClassDEscape
 					break;
 
 				case ZoneType.ENTRANCE:
+					if (ev.DamageType == DamageType.NUKE)
+					{
+						ev.Damage = 0;
+					}
 					break;
 			}
 		}
@@ -715,29 +762,16 @@ namespace ArithFeather.ClassDEscape
 		#region Phase 1
 
 		private const float TimeUntilIntroduction = 10f;
-		private const float TimeUntilDecontam = 8f;
 
-		private CassieMessage[] startCassieMessages = new CassieMessage[]
+		private string[] startCassieMessages = new string[]
 		{
-			new CassieMessage("UNAUTHORIZED ACCESS . . WARNING . SCP 0 7 . . . . PASSWORD ACCEPTED . ACCESS GRANTED . IN INSTALLING SOFTWARE . . . . . . COMPLETED . CRITICAL MALFUNCTION CORRUPTED DATA MEMORY UNSTABLE FACILITY IS NOW ON LOCKDOWN DOWN CORE OR ME ME ME", 29.5f)
+			"UNAUTHORIZED ACCESS . . WARNING . SCP 0 7 . . . . PASSWORD ACCEPTED . ACCESS GRANTED . IN INSTALLING SOFTWARE . . . . . . COMPLETED . CRITICAL MALFUNCTION CORRUPTED DATA MEMORY UNSTABLE FACILITY IS NOW ON LOCKDOWN DOWN CORE OR ME ME ME"
 		};
 
 		private string[] lczCassieMessages = new string[]
 		{
 			". . . . . I AM S C P 0 7 9 . . . YOU WILL ALL BE EXECUTED"
 		};
-
-		private class CassieMessage
-		{
-			public string Message;
-			public float MessageTime;
-
-			public CassieMessage(string message, float messageTime)
-			{
-				Message = message;
-				MessageTime = messageTime;
-			}
-		}
 
 		public void OnDecontaminate()
 		{
@@ -833,7 +867,7 @@ namespace ArithFeather.ClassDEscape
 				}
 				else
 				{
-					Timing.RunCoroutine(StartPhase2());
+					Timing.RunCoroutine(Phase2());
 				}
 			}
 		}
@@ -841,17 +875,15 @@ namespace ArithFeather.ClassDEscape
 		private IEnumerator<float> RoundStart()
 		{
 			var map = Server.Map;
+
 			if (!skipIntro)
 			{
 				var announcement = startCassieMessages[UnityEngine.Random.Range(0, startCassieMessages.Length)];
 
-				map.AnnounceCustomMessage(announcement.Message);
+				map.AnnounceCustomMessage(announcement);
 
-				yield return Timing.WaitForSeconds(announcement.MessageTime - 1.5f);
-
-				FlickerLCZLights();
-
-				yield return Timing.WaitForSeconds(1.5f);
+				yield return Timing.WaitForOneFrame;
+				yield return Timing.WaitUntilTrue(() => NineTailedFoxAnnouncer.singleton.isFree);
 			}
 
 			StartGameClassD();
@@ -862,7 +894,8 @@ namespace ArithFeather.ClassDEscape
 
 			StartGameSCP();
 
-			yield return Timing.WaitForSeconds(TimeUntilDecontam);
+			yield return Timing.WaitForOneFrame;
+			yield return Timing.WaitUntilTrue(() => NineTailedFoxAnnouncer.singleton.isFree);
 
 			StartDecontamination();
 
@@ -879,13 +912,25 @@ namespace ArithFeather.ClassDEscape
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		private void StartGameClassD()
 		{
-			// Unlock/open class d. open locked doors
+			// Unlock/open class d
 			var doorCount = CachedPrisonDoors.Count;
 			for (int i = 0; i < doorCount; i++)
 			{
 				var door = CachedPrisonDoors[i];
 				door.Networklocked = false;
 				door.NetworkisOpen = true;
+			}
+
+			// Open Locked doors
+			doorCount = CachedDoors.Count;
+			for (int i = 0; i < doorCount; i++)
+			{
+				var door = CachedDoors[i];
+
+				if (door.doorType == 2)
+				{
+					door.NetworkisOpen = true;
+				}
 			}
 
 			// Send broadcasts and lower SCP hp
@@ -920,18 +965,6 @@ namespace ArithFeather.ClassDEscape
 		private void StartGameSCP()
 		{
 			FlickerLCZLights();
-
-			// Open Locked doors and peanut door
-			var doorCount = CachedDoors.Count;
-			for (int i = 0; i < doorCount; i++)
-			{
-				var door = CachedDoors[i];
-
-				if (door.doorType == 2)
-				{
-					door.NetworkisOpen = true;
-				}
-			}
 
 			cached173Door.Networklocked = false;
 			cached173Door.NetworkisOpen = true;
@@ -997,34 +1030,39 @@ namespace ArithFeather.ClassDEscape
 
 		public void OnSCP914ChangeKnob(PlayerSCP914ChangeKnobEvent ev) => ev.KnobSetting = KnobSetting.ROUGH;
 		public void On079AddExp(Player079AddExpEvent ev) => ev.ExpToAdd *= expMultiplier;
-		public void On079LevelUp(Player079LevelUpEvent ev)
-		{
-			level++;
 
-			switch (level)
+		private IEnumerator<float> SetSCP079Stats(Player player)
+		{
+			yield return Timing.WaitForOneFrame;
+
+			var scp = (player.GetGameObject() as GameObject).GetComponent<Scp079PlayerScript>();
+			var levels = scp.levels;
+
+			for (int i = 0; i < levels.Length; i++)
 			{
-				case 1:
-					MaxMana = 15;
-					break;
-				case 2:
-					MaxMana = 25;
-					break;
-				case 3:
-					MaxMana = 30;
-					break;
-				case 4:
-					MaxMana = 35;
-					break;
+				var level = levels[i];
+
+				switch (i)
+				{
+					case 0:
+						level.maxMana = 10;
+						break;
+					case 1:
+						level.maxMana = 15;
+						break;
+					case 2:
+						level.maxMana = 25;
+						break;
+					case 3:
+						level.maxMana = 30;
+						break;
+					case 4:
+						level.maxMana = 35;
+						break;
+				}
 			}
 
-			scp079.NetworkmaxMana = MaxMana;
-		}
-		public void OnLateUpdate(LateUpdateEvent ev)
-		{
-			if (clampMana)
-			{
-				scp079.NetworkcurMana = Mathf.Clamp(scp079.Mana, 0, MaxMana);
-			}
+			scp.NetworkmaxMana = 10;
 		}
 
 		/// <summary>
@@ -1048,8 +1086,11 @@ namespace ArithFeather.ClassDEscape
 
 		private const float GeneratorSpeechTime = 10; // 5 originally, 10 for last one
 
-		private IEnumerator<float> StartPhase2()
+		private IEnumerator<float> Phase2()
 		{
+			// Wait for cassie to shut up
+			yield return Timing.WaitUntilTrue(() => NineTailedFoxAnnouncer.singleton.isFree);
+
 			currentGameState = ZoneType.HCZ;
 
 			var decon = cachedHost.GetComponent<DecontaminationLCZ>() as DecontaminationLCZ;
@@ -1098,7 +1139,9 @@ namespace ArithFeather.ClassDEscape
 
 			const int ClassDHP = 100;
 			var epCount = PlayersReachedElevator.Count;
-			int hpEach = ClassDHP - (int)((ClassDHP * epCount) / playerCount);
+			int hpEach = (int)((ClassDHP * epCount) / playerCount);
+			Broadcast(5, $"Dead players have been respawned. All players now have {hpEach} HP.");
+			hpEach = ClassDHP - hpEach;
 			for (int i = 0; i < epCount; i++)
 			{
 				var ep = PlayersReachedElevator[i];
@@ -1125,7 +1168,7 @@ namespace ArithFeather.ClassDEscape
 				}
 
 				// Broadcast
-				PersonalBroadcast(player, 5, "Your HP has been shared with those that did not make it.");
+
 				PersonalBroadcast(player, 10, "Activate the generators to make the exit open faster.\n Hint: Use your flashlight.");
 			}
 
@@ -1148,7 +1191,6 @@ namespace ArithFeather.ClassDEscape
 				player.GiveItem(ItemType.FLASHLIGHT);
 
 				// Broadcast
-				PersonalBroadcast(player, 5, "You have been respawned using your comrades HP");
 				PersonalBroadcast(player, 10, "Activate the generators to make the exit open faster.\n Hint: Use your flashlight.");
 			}
 
@@ -1164,10 +1206,14 @@ namespace ArithFeather.ClassDEscape
 				}
 			}
 
+			// Wait enough time for decontamination message
 			yield return Timing.WaitForSeconds(14);
 
+			// Start lights out
 			Server.Map.Shake();
-			FlickerHCZLights();
+			cachedGenerator.CallRpcOvercharge();
+			flickerTimer = 10;
+			var counterHandle = Timing.RunCoroutine(Counters());
 
 			yield return Timing.WaitForSeconds(1);
 
@@ -1180,11 +1226,7 @@ namespace ArithFeather.ClassDEscape
 			{
 				var nut = nuts[0];
 				nut.ChangeRole(Role.SCP_079);
-				scp079 = (nut.GetGameObject() as GameObject).GetComponent<Scp079PlayerScript>();
-				MaxMana = 10;
-				level = 0;
-				scp079.NetworkmaxMana = MaxMana;
-				clampMana = true;
+
 				PersonalBroadcast(nut, 10, "Help SCP 939 catch Class D, they can't see players that are sneaking around.\n" +
 					"Press tab to open the map. You can close and lock doors on players.");
 			}
@@ -1200,23 +1242,26 @@ namespace ArithFeather.ClassDEscape
 
 			Server.Map.AnnounceCustomMessage("WARNING . POWER FAILURE . . SCP 9 3 9 CONTAINMENT BREACH . . . CAUTION . THEY BYTE");
 
-			yield return Timing.WaitForSeconds(9);
+			yield return Timing.WaitForOneFrame;
+			yield return Timing.WaitUntilTrue(() => NineTailedFoxAnnouncer.singleton.isFree);
 
-			FlickerHCZLights();
-
-			yield return Timing.WaitForSeconds(1);
-
+			// Start countdown
+			escapeTimer = (int)(escapeTimerMinutes * 60);
 			var announceLength = announcements.Length;
-			UpdateCurrentAnnouncement();
+			var lastAnnouncement = announcements[announceLength - 1];
+			UpdateCurrentAnnouncement(false);
 
-			flickerTimer = 9;
-			Timing.RunCoroutine(Counters());
+			// if start time is 10 seconds over neck announcement, broadcast message
+			var startAnnouncement = announcements[currentAnnouncement];
+			if (announcements[currentAnnouncement].StartTime + 10 < escapeTimer)
+			{
+				Server.Map.AnnounceCustomMessage($"POWER REACTIVATION IN OVER {announcements[currentAnnouncement].Text}");
+			}
 
-			// Start countdown / Update every second
+			// Checking for countdown announcements/endings
 			while (currentGameState == ZoneType.HCZ)
 			{
-				// Check end 
-				if (currentAnnouncement < announceLength)
+				if (escapeTimer >= lastAnnouncement.StartTime)
 				{
 					var currAnnounce = announcements[currentAnnouncement];
 
@@ -1224,75 +1269,57 @@ namespace ArithFeather.ClassDEscape
 					{
 						currentAnnouncement++;
 
-						Server.Map.AnnounceCustomMessage($"POWER REACTIVATION IN T MINUS {currAnnounce.Text}");
+						Server.Map.AnnounceCustomMessage($"POWER REACTIVATION IN {currAnnounce.Text}");
 					}
 				}
 				else if (escapeTimer < 6)
 				{
-					yield return Timing.WaitForSeconds(GeneratorSpeechTime);
-
-					var weirdWaitTimeThing = flickerTimer - GeneratorSpeechTime;
-					if (weirdWaitTimeThing > 0)
-					{
-						yield return Timing.WaitForSeconds(weirdWaitTimeThing);
-					}
-
-					currentGameState = ZoneType.ENTRANCE;
-
-					yield return Timing.WaitForSeconds(1);
-
-					OpenFacility();
-
-					yield break;
+					if (escapeTimer > 0) yield return Timing.WaitForSeconds(escapeTimer);
+					break;
 				}
 				else if (escapeTimer <= 13)
 				{
-					var staticTimer = escapeTimer;
-					escapeTimer -= 1;
-					var flickerTimerRequires = escapeTimer % 10;
-					var pauseDuration = flickerTimer - flickerTimerRequires;
+					var countDownMessage = new StringBuilder(80);
+					countDownMessage.Clear();
+					countDownMessage.Append("POWER REACTIVATION IN ");
 
-					if (pauseDuration < 0)
+					for (int i = escapeTimer - 3; i >= 1; i--)
 					{
-						pauseDuration += 10;
-					}
-					else if (pauseDuration == 10)
-					{
-						pauseDuration = 0;
+						countDownMessage.Append(i);
+						countDownMessage.Append(" . ");
 					}
 
-					if (pauseDuration > 0)
-					{
-						yield return Timing.WaitForSeconds(pauseDuration);
-					}
+					Server.Map.AnnounceCustomMessage(countDownMessage.ToString());
 
-					var dumbCountDownBuilder = new StringBuilder(80);
-					dumbCountDownBuilder.Clear();
-					dumbCountDownBuilder.Append("POWER REACTIVATION IN ");
-
-					for (int i = staticTimer - 3; i >= 1; i--)
-					{
-						dumbCountDownBuilder.Append(i);
-						dumbCountDownBuilder.Append(" . ");
-					}
-
-					Server.Map.AnnounceCustomMessage(dumbCountDownBuilder.ToString());
-
-					yield return Timing.WaitForSeconds(staticTimer - 2);
-
-					currentGameState = ZoneType.ENTRANCE;
-
-					yield return Timing.WaitForSeconds(1);
-
-					OpenFacility();
-
-					yield break;
+					yield return Timing.WaitForSeconds(escapeTimer);
+					break;
 				}
 
 				yield return Timing.WaitForSeconds(1);
 			}
+
+			Timing.KillCoroutines(counterHandle);
+			if (flickerTimer > 2) yield return Timing.WaitForSeconds(flickerTimer - 2);
+
+			Server.Map.AnnounceCustomMessage("EMERGENCY BACKUP POWER ENGAGED . ENTRANCE CHECKPOINT IS NOW OPEN");
+
+			// Unlock entrance checkpoint
+			for (int i = 0; i < doorCount; i++)
+			{
+				var door = CachedDoors[i];
+
+				if (door.doorType == 3)
+				{
+					door.OpenDecontamination();
+				}
+			}
+
+			Timing.RunCoroutine(Phase3());
 		}
 
+		/// <summary>
+		/// Automatic flickering and countdown timer
+		/// </summary>
 		private IEnumerator<float> Counters()
 		{
 			while (currentGameState == ZoneType.HCZ)
@@ -1305,37 +1332,20 @@ namespace ArithFeather.ClassDEscape
 				if (flickerTimer == 0)
 				{
 					flickerTimer = 10;
-
-					FlickerHCZLights();
+					cachedGenerator.CallRpcOvercharge();
 				}
 			}
 		}
 
-		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		private void FlickerHCZLights() => cachedGenerator.CallRpcOvercharge();
-
-		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		private void OpenFacility()
-		{
-			// Unlock entrance checkpoint
-			var doorCount = CachedDoors.Count;
-			for (int i = 0; i < doorCount; i++)
-			{
-				var door = CachedDoors[i];
-
-				if (door.doorType == 3)
-				{
-					door.OpenDecontamination();
-				}
-			}
-
-			Server.Map.AnnounceCustomMessage("EMERGENCY BACKUP POWER ENGAGED . ENTRANCE CHECKPOINT IS NOW OPEN");
-		}
-
-		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		private void UpdateCurrentAnnouncement()
+		/// <summary>
+		/// Updates the currentAnnouncement depending on the escapeTimer.
+		/// </summary>
+		/// <param name="generatorActivated">Will attempt to broadcast a message if there's enough time before the next announcement</param>
+		private void UpdateCurrentAnnouncement(bool generatorActivated)
 		{
 			var announceLength = announcements.Length;
+
+			if (escapeTimer <= announcements[announceLength - 1].StartTime) return;
 
 			for (int i = 0; i < announceLength; i++)
 			{
@@ -1344,28 +1354,126 @@ namespace ArithFeather.ClassDEscape
 				if (escapeTimer >= ananas.StartTime)
 				{
 					currentAnnouncement = i;
+
+					if (generatorActivated && escapeTimer - ananas.StartTime > 10)
+					{
+						string customA = generatorCount < 5 ? $"SCP079RECON{generatorCount} . . " : string.Empty;
+						var previousAn = announcements[currentAnnouncement - 1];
+
+						if (currentAnnouncement - 1 < 0)
+						{
+							Server.Map.AnnounceCustomMessage($"{customA}POWER REACTIVATION IN OVER {ananas.Text}");
+						}
+						else
+						{
+							Server.Map.AnnounceCustomMessage($"{customA}POWER REACTIVATION IN LESS THEN {previousAn.Text}");
+						}
+					}
+
 					return;
 				}
 			}
-
-			currentAnnouncement = announceLength;
 		}
 
+		// Wait until last announcement finishes before doing new time logic.
 		public void OnGeneratorFinish(GeneratorFinishEvent ev)
 		{
+			generatorCount++;
+
+			genLocalTimeInfo.SetValue(ev.Generator.GetComponent() as Generator079, 1f);
+
+			Timing.RunCoroutine(DelayedGen());
+		}
+		private IEnumerator<float> DelayedGen()
+		{
+			yield return Timing.WaitForOneFrame;
+			yield return Timing.WaitUntilTrue(() => NineTailedFoxAnnouncer.singleton.isFree);
 			escapeTimer -= (int)(timeReductionPerGeneratorMinutes * 60);
-			UpdateCurrentAnnouncement();
+			UpdateCurrentAnnouncement(true);
 		}
 
 		#endregion
 
 		#region Phase 3
 
+		private static readonly Vector pocketPos = Vector.Down * 1997f;
 
 		public void On106CreatePortal(Player106CreatePortalEvent ev)
 		{
 			var spawns = ArithSpawningKit.RandomPlayerSpawning.RandomPlayerSpawning.Instance.Data.PlayerLoadedSpawns;
 			ev.Position = spawns[UnityEngine.Random.Range(0, spawns.Count)].Position;
+		}
+
+		public void OnPocketDimensionDie(PlayerPocketDimensionDieEvent ev)
+		{
+			ev.Die = false;
+			ev.Player.Teleport(pocketPos);
+		}
+
+		public void OnPocketDimensionExit(PlayerPocketDimensionExitEvent ev)
+		{
+			//todo ???
+		}
+
+		private IEnumerator<float> Phase3()
+		{
+			currentGameState = ZoneType.ENTRANCE;
+
+			yield return Timing.WaitForOneFrame;
+			yield return Timing.WaitUntilTrue(() => NineTailedFoxAnnouncer.singleton.isFree);
+
+			var map = Server.Map;
+			//todo open_doors_on_countdown also, 120 max nuke time apparently.
+			map.AnnounceCustomMessage("YOU . WILL . NOT . ESCAPE . . . . SCP 1 0 6 CONTAINMENT BREACH");
+
+			yield return Timing.WaitForSeconds(6);
+
+			foreach (var door in CachedExplosiveDoors)
+			{
+				door.DestroyDoor(true);
+			}
+			cachedGenerator.CallRpcOvercharge();
+			map.Shake();
+
+			yield return Timing.WaitUntilTrue(() => NineTailedFoxAnnouncer.singleton.isFree);
+
+			// Respawn players, pool HP
+			var players = Server.GetPlayers(Smod2.API.Team.CLASSD);
+			var playerCount = players.Count;
+			var hpPool = 0;
+			for (int i = 0; i < playerCount; i++)
+			{
+				var player = players[i];
+
+				if (player.TeamRole.Role == Role.CLASSD)
+				{
+					hpPool += player.GetHealth();
+				}
+				else
+				{
+					player.ChangeRole(Role.CLASSD);
+				}
+
+				PersonalBroadcast(player, 10, "Larry has trapped you in the Pocket Dimension!\nEscape as soon as possible");
+			}
+
+			// Equal HP and Teleport
+			var targetHP = hpPool / playerCount;
+			Broadcast(5, $"Dead players have been respawned. All players now have {targetHP} HP.");
+			for (int i = 0; i < playerCount; i++)
+			{
+				var player = players[i];
+
+				player.SetHealth(targetHP, DamageType.NONE);
+				player.Teleport(pocketPos);
+			}
+
+			yield return Timing.WaitForSeconds(15);
+
+			map.AnnounceCustomMessage("SCP 0 9 6 CONTAINMENT BREACH . . YOU WILL C IT AND BE TERMINATED");
+
+			//todo spawn SCP, start Larry countdown
+
 		}
 
 		/// <summary>
@@ -1453,6 +1561,8 @@ namespace ArithFeather.ClassDEscape
 				ev.Allow = false;
 			}
 		}
+
+		public void OnStopCountdown(WarheadStopEvent ev) => ev.Cancel = false;
 
 
 		#endregion
