@@ -57,6 +57,10 @@
     <Reference Include="UnityEngine">
       <HintPath>..\Packages\UnityEngine.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.AnimationModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\Packages\UnityEngine.AnimationModule.dll</HintPath>
+    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>..\Packages\UnityEngine.CoreModule.dll</HintPath>
     </Reference>

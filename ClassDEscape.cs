@@ -44,9 +44,9 @@ namespace ArithFeather.ClassDEscape
 		IEventHandlerPlayerJoin, IEventHandlerElevatorUse, IEventHandlerDoorAccess, IEventHandlerRoundRestart,
 		IEventHandlerCheckEscape, IEventHandlerRoundStart, IEventHandlerCallCommand, IEventHandler079AddExp,
 		IEventHandlerGeneratorFinish, IEventHandlerPlayerDie, IEventHandlerSCP914ChangeKnob, IEventHandlerLateDisconnect,
-		IEventHandlerPlayerHurt, IEventHandlerLCZDecontaminate, IEventHandler079Door, IEventHandlerWarheadChangeLever,
+		IEventHandlerPlayerHurt, IEventHandlerLCZDecontaminate, IEventHandlerWarheadChangeLever, IEventHandlerLure,
 		IEventHandlerWarheadStopCountdown, IEventHandlerPocketDimensionDie, IEventHandler106CreatePortal,
-		IEventHandler106Teleport
+		IEventHandler106Teleport, IEventHandlerWarheadKeycardAccess
 	{
 		public const string ModVersion = "1.0";
 
@@ -64,27 +64,40 @@ namespace ArithFeather.ClassDEscape
 		private const int WinTextSize = 70;
 
 		private static readonly string JoinGameMessage1 =
-			$"<size={ServerInfoSize}><color={ServerInfoColor}>Welcome to <color={ServerHighLightColor}>Class D Escape v{ModVersion}!</color> Press ` to open the console and enter '<color={ServerHighLightColor}>.help</color>' for mod information!</color></size>";
+			$"<size={ServerInfoSize}><color={ServerInfoColor}>Welcome to <color={ServerHighLightColor}>Class D Escape v{ModVersion} beta test!</color> Press ` to open the console and enter '<color={ServerHighLightColor}>.help</color>' for mod information!</color></size>";
 		private static readonly string JoinGameMessage2 =
 			$"<size={ServerInfoSize}><color={ServerInfoColor}>If you like the plugin, join the discord for updates!\n <color={ServerHighLightColor}>https://discord.gg/DunUU82</color></color></size>";
 
-		private static readonly string HelpMessage = "Git Gud";
+		private static readonly string HelpMessage = $"Class D Escape Mode v{ModVersion}\n" +
+			"https://discord.gg/DunUU82\n" +
+			"Class D Objective is to escape the facility without getting killed. Difficulty is hard.\n" +
+			"SCP need to kill all the Class D before they escape\n" +
+			"Card keys and other loot spawn randomly around the facility. Look near tables, chairs, shelves, etc.\n" +
+			"SCP914 is disabled. Nuke is disabled. Players respawn each phase.\n" +
+			"Phase 1: Find a keycard and escape through checkpoint to elevator\n" +
+			"Phase 2: watch out for the randomly teleporting Larry and Shyguy in the dark. Use your flashlight carefully.\n" +
+			"Phase 2: Activate generators to reduce the power reactivation countdown. This will begin phase 3.\n" +
+			"Phase 3: Find the black keycard and escape the facility. Watch out for the Dog and Computer SCP.\n";
 
-		private static readonly string AttemptNukeMessage = "OKAY THEN";
+		private static readonly string AttemptNukeMessage = "";
 
 		#endregion
 
 		[ConfigOption] private readonly bool disablePlugin = false;
 		[ConfigOption] private readonly bool showPlayerJoinMessage = true;
-		[ConfigOption] private readonly float expMultiplier = 50f;
-		[ConfigOption] private readonly float peanutStartHP = 1f;
-		[ConfigOption] private readonly int endScreenSpeedSeconds = 15;
-		[ConfigOption] private readonly float escapeTimerMinutes = 15f;
+		[ConfigOption] private readonly float expMultiplier = 25f;
+		[ConfigOption] private readonly float peanutHealthPercent = 1f;
+		[ConfigOption] private readonly float escapeTimerMinutes = 10f;
 		[ConfigOption] private readonly float timeReductionPerGeneratorMinutes = 3f;
 		[ConfigOption] private readonly bool skipIntro = false;
 		[ConfigOption] private readonly float lastPhaseNukeTimerMinutes = 5;
 		[ConfigOption] private readonly int secondsUntil106Teleport = 30;
-		[ConfigOption] private readonly bool allow106Teleport = true;
+		[ConfigOption] private readonly bool allowManualTeleport = true;
+		[ConfigOption] private readonly int lczKeySpawns = 3;
+		[ConfigOption] private readonly int hczKeyTabletSpawns = 4;
+		[ConfigOption] private readonly int entranceKeySpawns = 2;
+		[ConfigOption] private readonly bool scp106PocketKill = true;
+		[ConfigOption] private readonly bool allowFemurBreaker = false;
 
 		// Called once on register
 		private bool useDefaultConfig; // manually get on register
@@ -98,10 +111,9 @@ namespace ArithFeather.ClassDEscape
 		private bool roundStarted = false;
 		private bool endingGame = false;
 		private bool isIntermission;
+		private int endScreenSpeedSeconds = 15;
 
 		private Broadcast cachedBroadcast;
-		private List<Door> cachedDoors;
-		private List<Door> CachedDoors => cachedDoors ?? (cachedDoors = new List<Door>(200));
 		private GameObject cachedHost;
 		private Room[] cachedRooms;
 
@@ -129,6 +141,7 @@ namespace ArithFeather.ClassDEscape
 		private List<ElevatorPlayer> PlayersReachedElevator => playersReachedElevator ?? (playersReachedElevator = new List<ElevatorPlayer>(14));
 		private List<Elevator> lczElevators;
 		private List<Elevator> LczElevators => lczElevators ?? (lczElevators = new List<Elevator>(4));
+		private CoroutineHandle firstPhaseCoRo;
 
 		private class ElevatorPlayer
 		{
@@ -153,6 +166,7 @@ namespace ArithFeather.ClassDEscape
 
 		private readonly FieldInfo curAnmInfo = typeof(DecontaminationLCZ).GetField("curAnm", BindingFlags.NonPublic | BindingFlags.Instance);
 		private readonly FieldInfo genLocalTimeInfo = typeof(Generator079).GetField("localTime", BindingFlags.NonPublic | BindingFlags.Instance);
+		private readonly FieldInfo roundEndedInfo = typeof(RoundSummary).GetField("roundEnded", BindingFlags.NonPublic | BindingFlags.Instance);
 
 		//+ Phase 2
 
@@ -162,6 +176,7 @@ namespace ArithFeather.ClassDEscape
 		private Generator079 cachedGenerator;
 		private int generatorCount;
 		private bool attemptedToNuke;
+		private CoroutineHandle scp106Handle;
 
 
 		private Announcement[] announcements = new Announcement[]
@@ -225,7 +240,7 @@ namespace ArithFeather.ClassDEscape
 					ev.Value = true;
 					break;
 				case "smart_class_picker":
-					ev.Value = false;
+					ev.Value = true;
 					break;
 				case "cassie_generator_announcements":
 					ev.Value = false;
@@ -238,8 +253,8 @@ namespace ArithFeather.ClassDEscape
 					break;
 
 				// Editable configs
-				case "disable_decontamination": //todo false
-					if (useDefaultConfig) ev.Value = true;
+				case "disable_decontamination":
+					if (useDefaultConfig) ev.Value = false;
 					break;
 
 				case "decontamination_time":
@@ -260,7 +275,7 @@ namespace ArithFeather.ClassDEscape
 					break;
 
 				case "team_respawn_queue":
-					if (useDefaultConfig) ev.Value = "40044444444404444444";
+					if (useDefaultConfig) ev.Value = "04404444444444044444";
 					break;
 
 				case "generator_duration":
@@ -290,6 +305,9 @@ namespace ArithFeather.ClassDEscape
 			cachedBroadcast = cachedHost.GetComponent<Broadcast>();
 			isIntermission = false;
 
+			var configFile = ConfigManager.Config;
+			endScreenSpeedSeconds = useDefaultConfig ? 15 : configFile.GetIntValue("auto_round_restart_time", 15);
+
 			RoundSCP.Clear();
 			RoundPlayers.Clear();
 
@@ -315,12 +333,6 @@ namespace ArithFeather.ClassDEscape
 					case ElevatorType.LiftB:
 						LczElevators.Add(elevator);
 						break;
-
-					case ElevatorType.GateA:
-						break;
-					case ElevatorType.GateB:
-						break;
-
 					case ElevatorType.WarheadRoom:
 					case ElevatorType.SCP049Chamber:
 						HczElevators.Add(elevator);
@@ -334,7 +346,6 @@ namespace ArithFeather.ClassDEscape
 			attemptedToNuke = false;
 
 			// Phase 3
-			EscapedPlayers.Clear();
 			allowPortal = false;
 			autoTeleport = false;
 
@@ -347,7 +358,6 @@ namespace ArithFeather.ClassDEscape
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		private void CacheDoors()
 		{
-			CachedDoors.Clear();
 			CachedHczDoors.Clear();
 			CachedLczDoors.Clear();
 			CachedPrisonDoors.Clear();
@@ -392,12 +402,18 @@ namespace ArithFeather.ClassDEscape
 							}
 
 							break;
-							//case "EntranceRooms":
-							//	break;
+						case "EntranceRooms":
+
+							door.dontOpenOnWarhead = true;
+
+							if (door.doorType == 2)
+							{
+								door.permissionLevel = "CONT_LVL_3";
+							}
+
+							break;
 					}
 				}
-
-				CachedDoors.Add(door);
 			}
 		}
 
@@ -405,6 +421,7 @@ namespace ArithFeather.ClassDEscape
 		{
 			if (endingGame) return;
 			roundStarted = true;
+			Timing.KillCoroutines(RoundSummary.singleton.gameObject);
 
 			// Cache players/SCP
 			var players = Server.GetPlayers();
@@ -433,68 +450,57 @@ namespace ArithFeather.ClassDEscape
 			var averageSpawnCount = 5 + (int)(numPlayers * ratio); // 20 = 20 || 10 = 13
 			var halfAv = (int)(averageSpawnCount / 2); // 20 = 10 || av. 10 = 6
 
-			// LCZ (27 spawns) 20 = 23 || 10 = 16
-			itemSpawner.SpawnItems(2, ZoneType.LCZ, ItemType.ZONE_MANAGER_KEYCARD);
-			itemSpawner.SpawnItems(averageSpawnCount, ZoneType.LCZ, ItemType.RADIO);
+			// LCZ (32 spawns) 20 = 23 || 10 = 16
+			itemSpawner.SpawnItems(lczKeySpawns, ZoneType.LCZ, ItemType.ZONE_MANAGER_KEYCARD);
+			itemSpawner.SpawnItems((int)(averageSpawnCount * 1.5f), ZoneType.LCZ, ItemType.RADIO);
 
-			// HCZ (39) 20 = 36 | 10 = 25
+			// HCZ (31) 20 = 36 | 10 = 25
 			itemSpawner.ResetRoomIndexer();
-			itemSpawner.SpawnItems(3, ZoneType.HCZ, ItemType.CHAOS_INSURGENCY_DEVICE);
-			itemSpawner.SpawnItems(3, ZoneType.HCZ, ItemType.WEAPON_MANAGER_TABLET);
+			itemSpawner.SpawnItems(hczKeyTabletSpawns, ZoneType.HCZ, ItemType.CHAOS_INSURGENCY_DEVICE);
+			itemSpawner.SpawnItems(hczKeyTabletSpawns, ZoneType.HCZ, ItemType.WEAPON_MANAGER_TABLET);
 			itemSpawner.SpawnItems(halfAv, ZoneType.HCZ, ItemType.RADIO);
 			itemSpawner.SpawnItems(averageSpawnCount, ZoneType.HCZ, ItemType.MEDKIT);
 
-			//todo 
-			// Entrance (47)
+			// Entrance (38)
 			itemSpawner.ResetRoomIndexer();
-			itemSpawner.SpawnItems(2, ZoneType.ENTRANCE, ItemType.FACILITY_MANAGER_KEYCARD);
+			itemSpawner.SpawnItems(entranceKeySpawns, ZoneType.ENTRANCE, ItemType.O5_LEVEL_KEYCARD);
 			itemSpawner.SpawnItems((int)(averageSpawnCount * 1.5f), ZoneType.ENTRANCE, ItemType.MEDKIT);
 
 
 			//// Testing stuff - Displays all item spawns per zone
-			itemSpawner.SpawnItems(200, ZoneType.UNDEFINED, ItemType.MEDKIT);
+			//itemSpawner.SpawnItems(200, ZoneType.UNDEFINED, ItemType.MEDKIT);
 
-			var rooms = itemSpawner.Rooms;
+			//var rooms = itemSpawner.Rooms;
 
-			var h = 0;
-			var l = 0;
-			var e = 0;
-			foreach (var room in rooms)
-			{
-				for (int i = 0; i < room.ItemSpawnPoints.Count; i++)
-				{
-					if (i == room.MaxItemsAllowed) break;
+			//var h = 0;
+			//var l = 0;
+			//var e = 0;
+			//foreach (var room in rooms)
+			//{
+			//	for (int i = 0; i < room.ItemSpawnPoints.Count; i++)
+			//	{
+			//		if (i == room.MaxItemsAllowed) break;
 
-					var spawn = room.ItemSpawnPoints[i];
-					if (spawn.ZoneType == ZoneType.ENTRANCE)
-					{
-						e++;
-					}
-					else if (spawn.ZoneType == ZoneType.LCZ)
-					{
-						l++;
-					}
-					else if (spawn.ZoneType == ZoneType.HCZ)
-					{
-						h++;
-					}
-				}
-			}
-			Info($"Light Spawn Points: {l}");
-			Info($"Heavy Spawn Points: {h}");
-			Info($"Entrance Spawn Points: {e}");
+			//		var spawn = room.ItemSpawnPoints[i];
+			//		if (spawn.ZoneType == ZoneType.ENTRANCE)
+			//		{
+			//			e++;
+			//		}
+			//		else if (spawn.ZoneType == ZoneType.LCZ)
+			//		{
+			//			l++;
+			//		}
+			//		else if (spawn.ZoneType == ZoneType.HCZ)
+			//		{
+			//			h++;
+			//		}
+			//	}
+			//}
+			//Info($"Light Spawn Points: {l}");
+			//Info($"Heavy Spawn Points: {h}");
+			//Info($"Entrance Spawn Points: {e}");
 
-			ActivateCoHandles.Add(Timing.RunCoroutine(RoundStart()));
-
-			//todo testing below - instant start phase 2
-
-			//var p = Server.GetPlayers(Role.CLASSD)[0];
-			//OnPlayerJoin(new PlayerJoinEvent(p));
-			//p.ChangeRole(Role.SPECTATOR, false, false, false);
-			//CheckEndPhase1(0);
-
-			//todo testing phase 3
-			//Timing.RunCoroutine(Phase3());
+			firstPhaseCoRo = Timing.RunCoroutine(RoundStart());
 		}
 
 		#endregion
@@ -619,15 +625,11 @@ namespace ArithFeather.ClassDEscape
 
 				case ZoneType.LCZ:
 
-					RemoveElevatorPlayer(disconnectedPlayer.PlayerId);
-
 					CheckEndPhase1(false);
 
 					break;
 
 				case ZoneType.HCZ:
-
-					RemoveElevatorPlayer(disconnectedPlayer.PlayerId); // Check here incase
 
 					CheckEndPhase2(false, false);
 
@@ -671,13 +673,50 @@ namespace ArithFeather.ClassDEscape
 		{
 			// Testing Announcements
 			//if (ev.Player.GetRankName().ToUpper() == "OWNER")
-			Server.Map.AnnounceCustomMessage(ev.Command);
+			//Server.Map.AnnounceCustomMessage(ev.Command);
 
 			switch (ev.Command.ToUpper())
 			{
 				case "HELP":
 					ev.ReturnMessage = HelpMessage;
 					break;
+			}
+		}
+
+		public void OnElevatorUse(PlayerElevatorUseEvent ev)
+		{
+			if (endingGame) return;
+
+			if (currentGameState == ZoneType.LCZ)
+			{
+				ev.AllowUse = false;
+
+				if (ev.Player.TeamRole.Team != Smod2.API.Team.SCP)
+				{
+					var player = ev.Player;
+					PlayersReachedElevator.Add(new ElevatorPlayer(player, ev.Elevator));
+					var inv = player.GetInventory();
+					for (int i = 0; i < inv.Count; i++)
+					{
+						var item = inv[i];
+						if (item.ItemType == ItemType.ZONE_MANAGER_KEYCARD)
+						{
+							var itemSpawning = RandomItemSpawner.RandomItemSpawner.Instance.ItemSpawning;
+							itemSpawning.CheckSpawns();
+							itemSpawning.SpawnItems(2, ZoneType.LCZ, ItemType.ZONE_MANAGER_KEYCARD);
+						}
+					}
+
+					player.ChangeRole(Role.SPECTATOR, true, false, false);
+					PersonalBroadcast(player, 5, "You have escaped to heavy containment! Please wait for the other players...");
+
+					CheckEndPhase1(false);
+				}
+			}
+			else if (currentGameState == ZoneType.ENTRANCE && isIntermission)
+			{
+				ev.AllowUse = false;
+				PersonalBroadcast(ev.Player, (uint)5, "Please wait for respawns...");
 			}
 		}
 
@@ -707,6 +746,7 @@ namespace ArithFeather.ClassDEscape
 						if (player.TeamRole.Team != Smod2.API.Team.SCP)
 						{
 							PersonalBroadcast(player, 5, "You will respawn if Class D Makes it to phase 3...");
+							PlayersReachedElevator.Add(new ElevatorPlayer(player, null));
 							CheckEndPhase2(true, false);
 						}
 						else
@@ -751,9 +791,11 @@ namespace ArithFeather.ClassDEscape
 
 				case ZoneType.HCZ:
 
-					if (ev.Role == Role.SCP_106)
+					if (ev.TeamRole.Role == Role.SCP_106)
 					{
-						ActivateCoHandles.Add(Timing.RunCoroutine(LarryTimer(ev.Player)));
+						if (scp106Handle.IsRunning) Timing.KillCoroutines(scp106Handle);
+
+						scp106Handle = Timing.RunCoroutine(LarryTimer(ev.Player));
 					}
 
 					break;
@@ -815,15 +857,15 @@ namespace ArithFeather.ClassDEscape
 
 					break;
 
-				case ZoneType.ENTRANCE:
-					break;
+					//case ZoneType.ENTRANCE:
+					//	break;
 			}
 
 			// For testing
-			var door = (ev.Door.GetComponent() as Door);
-			Info(door.DoorName);
-			Info(door.doorType.ToString());
-			Info(door.name);
+			//var door = (ev.Door.GetComponent() as Door);
+			//Info(door.DoorName);
+			//Info(door.doorType.ToString());
+			//Info(door.name);
 		}
 
 		public void OnPlayerHurt(PlayerHurtEvent ev)
@@ -852,30 +894,22 @@ namespace ArithFeather.ClassDEscape
 					{
 						ev.Damage = 0;
 					}
-					else if (ev.DamageType == DamageType.SCP_939)
-					{
-						ev.Damage /= 2;
-					}
 
 					break;
 
 				case ZoneType.ENTRANCE:
 
-					// Make sure pocket can't kill you
-					if (ev.DamageType == DamageType.POCKET)
+					if (ev.DamageType == DamageType.SCP_939)
 					{
-						var playerHP = ev.Player.GetHealth();
-						if (playerHP - ev.Damage < 1)
-						{
-							ev.Damage = playerHP - 1;
-						}
-					}
-					else if (ev.DamageType == DamageType.SCP_106)
-					{
-						ev.Damage = 0;
+						ev.Damage /= 2;
 					}
 
 					break;
+			}
+
+			if (ev.DamageType == DamageType.LURE)
+			{
+				ev.Damage = 0;
 			}
 		}
 
@@ -892,6 +926,10 @@ namespace ArithFeather.ClassDEscape
 		{
 			if (!endingGame)
 			{
+				var sum = RoundSummary.singleton;
+
+				roundEndedInfo.SetValue(sum, true);
+
 				endingGame = true;
 				currentGameState = ZoneType.UNDEFINED;
 
@@ -906,11 +944,11 @@ namespace ArithFeather.ClassDEscape
 				{
 					Timing.KillCoroutines(coRo);
 				}
+				Timing.KillCoroutines(scp106Handle);
+				Timing.KillCoroutines(firstPhaseCoRo);
 				ActivateCoHandles.Clear();
 
-				var sum = RoundSummary.singleton;
-
-				var list = new RoundSummary.SumInfo_ClassList();
+				var list = default(RoundSummary.SumInfo_ClassList);
 				list.warhead_kills = ((!AlphaWarheadController.host.detonated) ? -1 : AlphaWarheadController.host.warheadKills);
 				list.time = (int)Time.realtimeSinceStartup;
 				list.class_ds = RoundPlayers.Count;
@@ -927,6 +965,8 @@ namespace ArithFeather.ClassDEscape
 				yield return Timing.WaitForSeconds(1f);
 
 				Round.RestartRound();
+
+				roundEndedInfo.SetValue(sum, false);
 			}
 		}
 
@@ -943,8 +983,12 @@ namespace ArithFeather.ClassDEscape
 			}
 			ActivateCoHandles.Clear();
 
+			Timing.KillCoroutines(scp106Handle);
+			Timing.KillCoroutines(firstPhaseCoRo);
 			Timing.KillCoroutines(endingCoRo);
 		}
+
+		private static bool PlayerIsDead(Player player) => (player.GetGameObject() as GameObject).GetComponent<CharacterClassManager>().curClass == 2;
 
 		#endregion
 
@@ -971,45 +1015,13 @@ namespace ArithFeather.ClassDEscape
 			if (currentGameState == ZoneType.LCZ) ActivateCoHandles.Add(Timing.RunCoroutine(KillSCPDecontamination()));
 		}
 
-		public void OnElevatorUse(PlayerElevatorUseEvent ev)
-		{
-			if (endingGame) return;
-
-			if (currentGameState == ZoneType.LCZ)
-			{
-				ev.AllowUse = false;
-
-				if (ev.Player.TeamRole.Team != Smod2.API.Team.SCP)
-				{
-					var player = ev.Player;
-					PlayersReachedElevator.Add(new ElevatorPlayer(player, ev.Elevator));
-					var inv = player.GetInventory();
-					for (int i = 0; i < inv.Count; i++)
-					{
-						var item = inv[i];
-						if (item.ItemType == ItemType.ZONE_MANAGER_KEYCARD)
-						{
-							var itemSpawning = RandomItemSpawner.RandomItemSpawner.Instance.ItemSpawning;
-							itemSpawning.CheckSpawns();
-							itemSpawning.SpawnItems(2, ZoneType.LCZ, ItemType.ZONE_MANAGER_KEYCARD);
-						}
-					}
-
-					player.ChangeRole(Role.SPECTATOR, true, false, false);
-					PersonalBroadcast(player, 5, "You have escaped to heavy containment! Please wait for the other players...");
-
-					CheckEndPhase1(false);
-				}
-			}
-		}
-
 		private const int KillPeanutInSeconds = 10;
 		private const int PeanutHP = 3200;
 		private int peanutDeconDamage;
 
 		private IEnumerator<float> KillSCPDecontamination()
 		{
-			peanutDeconDamage = (int)(((PeanutHP * peanutStartHP) / KillPeanutInSeconds) / 4f);
+			peanutDeconDamage = (int)(((PeanutHP * peanutHealthPercent) / KillPeanutInSeconds) / 4f);
 
 			ActivateCoHandles.Add(Timing.RunCoroutine(DecontaminationPlayerDamage()));
 
@@ -1018,10 +1030,10 @@ namespace ArithFeather.ClassDEscape
 			if (currentGameState == ZoneType.LCZ)
 			{
 				// Unlock doors, open locked doors, open checkpoint
-				var doorCount = CachedDoors.Count;
+				var doorCount = CachedLczDoors.Count;
 				for (int i = 0; i < doorCount; i++)
 				{
-					var door = CachedDoors[i];
+					var door = CachedLczDoors[i];
 
 					switch (door.doorType)
 					{
@@ -1167,7 +1179,7 @@ namespace ArithFeather.ClassDEscape
 				PersonalBroadcast(player, 10, "Work together to escape light containment via an elevator.");
 			}
 
-			int scpDamage = (int)(PeanutHP * (1 - peanutStartHP));
+			int scpDamage = (int)(PeanutHP * (1 - peanutHealthPercent));
 			if (scpDamage > 0)
 			{
 				playerCount = RoundSCP.Count;
@@ -1245,51 +1257,125 @@ namespace ArithFeather.ClassDEscape
 
 		#region Phase 2
 
-		public void On079AddExp(Player079AddExpEvent ev) => ev.ExpToAdd *= expMultiplier;
+		#region Larry Stuff
 
-		public void On079Door(Player079DoorEvent ev)
+		private static readonly Vector pocketPos = Vector.Down * 1997f;
+
+		public void On106CreatePortal(Player106CreatePortalEvent ev)
 		{
-			var doorType = (ev.Door.GetComponent() as Door).doorType;
-
-			if (doorType == 3)
+			if (allowPortal)
 			{
-				ev.Allow = false;
+				ev.Position = GetRandomHeavyPos(ev.Player);
+			}
+			else
+			{
+				ev.Position = null;
 			}
 		}
 
-		private IEnumerator<float> SetSCP079Stats(Player player)
+		public void OnLure(PlayerLureEvent ev)
+		{
+			if (!allowFemurBreaker)
+			ev.AllowContain = false;
+		}
+
+		public void On106Teleport(Player106TeleportEvent ev)
+		{
+			if (autoTeleport || allowManualTeleport)
+			{
+				ActivateCoHandles.Add(Timing.RunCoroutine(_TeleportLarry(ev.Player)));
+			}
+			else
+			{
+				ev.Position = null;
+			}
+		}
+
+		/// <summary>
+		/// Makes sure a larry teleports every # seconds and creates a new portal after
+		/// </summary>
+		private IEnumerator<float> LarryTimer(Player player)
 		{
 			yield return Timing.WaitForSeconds(1);
 
-			var scp = (player.GetGameObject() as GameObject).GetComponent<Scp079PlayerScript>();
-			var levels = scp.levels;
+			PersonalBroadcast(player, 8, $"You will automatically teleport every {secondsUntil106Teleport} seconds.");
+			if (allowManualTeleport) PersonalBroadcast(player, 4, $"You can trigger the teleport manually.");
 
-			for (int i = 0; i < levels.Length; i++)
+			var playerScript = (player.GetGameObject() as GameObject).GetComponent<Scp106PlayerScript>();
+			larryTpTimer = secondsUntil106Teleport - 4;
+
+			yield return Timing.WaitForSeconds(3);
+
+			allowPortal = true;
+			playerScript.CallCmdMakePortal();
+			yield return Timing.WaitForSeconds(0.5f);
+			allowPortal = false;
+
+			while (currentGameState == ZoneType.HCZ)
 			{
-				var level = levels[i];
+				yield return Timing.WaitForSeconds(1);
+				larryTpTimer -= 1;
 
-				switch (i)
+				if (larryTpTimer <= 0)
 				{
-					case 0:
-						level.maxMana = 10;
-						break;
-					case 1:
-						level.maxMana = 15;
-						break;
-					case 2:
-						level.maxMana = 25;
-						break;
-					case 3:
-						level.maxMana = 30;
-						break;
-					case 4:
-						level.maxMana = 35;
-						break;
+					var moveSync = playerScript.GetComponent<FallDamage>();
+					yield return Timing.WaitUntilTrue(() => moveSync.isGrounded);
+
+					autoTeleport = true;
+					playerScript.CallCmdUsePortal();
+
+					yield return Timing.WaitForSeconds(3f);
+				}
+				else if (larryTpTimer <= 10)
+				{
+					PersonalBroadcast(player, 1, $"Teleport in {larryTpTimer}");
 				}
 			}
-
-			scp.NetworkmaxMana = 10;
 		}
+
+		private IEnumerator<float> _TeleportLarry(Player player)
+		{
+			var script = (player.GetGameObject() as GameObject).GetComponent<Scp106PlayerScript>();
+
+			PersonalBroadcast(player, 2, $"Teleporting...");
+
+			autoTeleport = false;
+			larryTpTimer = secondsUntil106Teleport + 3;
+
+			yield return Timing.WaitForSeconds(3);
+			yield return Timing.WaitUntilFalse(() => script.goingViaThePortal);
+
+			allowPortal = true;
+			script.CallCmdMakePortal();
+			yield return Timing.WaitForSeconds(0.5f);
+			allowPortal = false;
+		}
+
+		private readonly Vector portalOffset = new Vector(0, -2, 0);
+
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		private Vector GetRandomHeavyPos(Player player)
+		{
+			var spawns = ArithSpawningKit.RandomPlayerSpawning.RandomPlayerSpawning.Instance.Data.PlayerLoadedSpawns;
+
+			if (spawns.Count == 0)
+			{
+				return player.GetPosition();
+			}
+
+			return spawns[UnityEngine.Random.Range(0, spawns.Count)].Position + portalOffset;
+		}
+
+		public void OnPocketDimensionDie(PlayerPocketDimensionDieEvent ev)
+		{
+			if (!scp106PocketKill)
+			{
+				ev.Die = false;
+				ev.Player.Teleport(pocketPos);
+			}
+		}
+
+		#endregion
 
 		/// <summary>
 		/// Check when:
@@ -1315,6 +1401,8 @@ namespace ArithFeather.ClassDEscape
 
 		private IEnumerator<float> Phase2()
 		{
+			if (firstPhaseCoRo.IsRunning) Timing.KillCoroutines(firstPhaseCoRo);
+
 			isIntermission = true;
 			currentGameState = ZoneType.HCZ;
 
@@ -1337,6 +1425,8 @@ namespace ArithFeather.ClassDEscape
 				}
 			}
 
+			yield return Timing.WaitForSeconds(1);
+
 			// Send nuts back home so they can't sneak in the elevators
 			var nutCount = RoundSCP.Count;
 			var scpPos = Server.Map.GetSpawnPoints(Role.SCP_173)[0];
@@ -1345,8 +1435,6 @@ namespace ArithFeather.ClassDEscape
 			{
 				RoundSCP[i].Teleport(scpPos);
 			}
-
-			yield return Timing.WaitForSeconds(2);
 
 			// Run elevators
 			foreach (var elevator in LczElevators)
@@ -1366,61 +1454,62 @@ namespace ArithFeather.ClassDEscape
 			var epCount = PlayersReachedElevator.Count;
 			int hpEach = (int)((ClassDHP * epCount) / playerCount);
 
-			Broadcast(5, $"Dead players have been respawned. All players now have {hpEach} HP.");
+			Broadcast(8, $"Dead players have been respawned. All players now have {hpEach} HP.");
 			hpEach = ClassDHP - hpEach;
-
-			for (int i = 0; i < epCount; i++)
-			{
-				var ep = PlayersReachedElevator[i];
-				var player = ep.player;
-
-				player.ChangeRole(Role.CLASSD, true, false, false);
-
-				// Position inside the elevator they clicked.
-				player.Teleport(Tools.Vec3ToVec((ep.Elevator.GetComponent() as Lift).transform.position + new Vector3(0, 1.35f, 0)));
-
-				// Equal HP
-				player.Damage(hpEach);
-
-				// Return Inventory
-				player.GiveItem(ItemType.FLASHLIGHT);
-				var inv = ep.Inventory;
-				var invCount = ep.Inventory.Count;
-				if (invCount > 0)
-				{
-					for (int j = 0; j < invCount; j++)
-					{
-						player.GiveItem(inv[j]);
-					}
-				}
-
-				// Broadcast
-
-				PersonalBroadcast(player, 10, "Activate the generators to make the exit open faster.\n Hint: Use your flashlight.");
-			}
-
-			yield return Timing.WaitForOneFrame;
 
 			for (int i = 0; i < playerCount; i++)
 			{
 				var player = RoundPlayers[i];
 
-				if (player.TeamRole.Role != Role.SPECTATOR) continue;
-
 				player.ChangeRole(Role.CLASSD, true, false, false);
-
-				// Position inside random elevator
-				var randomEv = LczElevators[UnityEngine.Random.Range(0, LczElevators.Count)];
-				player.Teleport(Tools.Vec3ToVec((randomEv.GetComponent() as Lift).transform.position + new Vector3(0, 1.35f, 0)));
-
-				// Equal HP
-				player.Damage(hpEach);
-
-				// Return Inventory
-				player.GiveItem(ItemType.FLASHLIGHT);
-
-				// Broadcast
 				PersonalBroadcast(player, 10, "Activate the generators to make the exit open faster.\n Hint: Use your flashlight.");
+
+				bool playerReachedElevator = false;
+				for (int j = 0; j < epCount; j++)
+				{
+					var ep = PlayersReachedElevator[j];
+
+					if (ep.player.PlayerId == player.PlayerId)
+					{
+						// Position inside the elevator they clicked.
+						player.Teleport(Tools.Vec3ToVec((ep.Elevator.GetComponent() as Lift).transform.position + new Vector3(0, 1.35f, 0)));
+
+						// Equal HP
+						player.Damage(hpEach);
+
+						// Return Inventory
+						player.GiveItem(ItemType.FLASHLIGHT);
+						var inv = ep.Inventory;
+						var invCount = ep.Inventory.Count;
+						if (invCount > 0)
+						{
+							for (int h = 0; h < invCount; h++)
+							{
+								player.GiveItem(inv[h]);
+							}
+						}
+
+						playerReachedElevator = true;
+						break;
+					}
+				}
+
+				if (!playerReachedElevator)
+				{
+					// Position inside random elevator
+					var randomEv = LczElevators[UnityEngine.Random.Range(0, LczElevators.Count)];
+					player.Teleport(Tools.Vec3ToVec((randomEv.GetComponent() as Lift).transform.position + new Vector3(0, 1.35f, 0)));
+
+					// Equal HP
+					player.Damage(hpEach);
+
+					// Return Inventory
+					player.GiveItem(ItemType.FLASHLIGHT);
+
+					// Broadcast
+					PersonalBroadcast(player, 10, "Activate the generators to make the exit open faster.\n Hint: Use your flashlight.");
+
+				}
 			}
 
 			// Open locked doors
@@ -1456,7 +1545,6 @@ namespace ArithFeather.ClassDEscape
 			{
 				var scp = RoundSCP[0];
 				scp.ChangeRole(Role.SCP_106);
-				scp.Teleport(GetRandomHeavyPos());
 			}
 			if (scpCount >= 2)
 			{
@@ -1618,33 +1706,29 @@ namespace ArithFeather.ClassDEscape
 		// Trying to nuke
 		public void OnChangeLever(WarheadChangeLeverEvent ev)
 		{
-			ev.Allow = false;
+			//if (endingGame) return;
 
-			if (endingGame) return;
-
-			if (!attemptedToNuke)
-			{
-				attemptedToNuke = true;
-				ActivateCoHandles.Add(Timing.RunCoroutine(NukeAttempt()));
-			}
+			//if (!attemptedToNuke)
+			//{
+			//	attemptedToNuke = true;
+			//	ActivateCoHandles.Add(Timing.RunCoroutine(NukeAttempt()));
+			//}
 		}
-		private IEnumerator<float> NukeAttempt()
-		{
-			// Wait for important shit, pause half a second to let other code run and reannounce stuff.
-			do
-			{
-				yield return Timing.WaitForSeconds(0.5f);
-			}
-			while (!NineTailedFoxAnnouncer.singleton.isFree);
+		//private IEnumerator<float> NukeAttempt()
+		//{
+		//	// Wait for important shit, pause half a second to let other code run and reannounce stuff.
+		//	do
+		//	{
+		//		yield return Timing.WaitForSeconds(0.5f);
+		//	}
+		//	while (!NineTailedFoxAnnouncer.singleton.isFree);
 
-			Server.Map.AnnounceCustomMessage(AttemptNukeMessage);
-		}
+		//	Server.Map.AnnounceCustomMessage(AttemptNukeMessage);
+		//}
 
 		#endregion
 
 		#region Phase 3
-
-		private static readonly Vector pocketPos = Vector.Down * 1997f;
 
 		public void OnStopCountdown(WarheadStopEvent ev) => ev.Cancel = false;
 
@@ -1671,7 +1755,7 @@ namespace ArithFeather.ClassDEscape
 					SCPWin();
 				}
 			}
-			else if (scpAlive == 0)
+			else if (scpAlive == 0 && !Server.Map.WarheadDetonated)
 			{
 				ClassDWin();
 			}
@@ -1696,64 +1780,11 @@ namespace ArithFeather.ClassDEscape
 			}
 
 			Broadcast(5, messages.ToString());
+
+			EndGame(RoundSummary.LeadingTeam.ChaosInsurgency);
 		}
 
-		public void On106CreatePortal(Player106CreatePortalEvent ev)
-		{
-			if (allowPortal)
-			{
-				ev.Position = GetRandomHeavyPos();
-			}
-			else
-			{
-				ev.Position = null;
-			}
-		}
-
-		public void On106Teleport(Player106TeleportEvent ev)
-		{
-			if (autoTeleport || allow106Teleport)
-			{
-				ActivateCoHandles.Add(Timing.RunCoroutine(_TeleportLarry(ev.Player)));
-			}
-			else
-			{
-				ev.Position = null;
-			}
-		}
-
-		private IEnumerator<float> _TeleportLarry(Player player)
-		{
-			var script = (player.GetGameObject() as GameObject).GetComponent<Scp106PlayerScript>();
-
-			PersonalBroadcast(player, 2, $"Teleporting...");
-
-			autoTeleport = false;
-			larryTpTimer = secondsUntil106Teleport + 3;
-
-			yield return Timing.WaitForSeconds(3);
-			yield return Timing.WaitUntilFalse(() => script.goingViaThePortal);
-
-			allowPortal = true;
-			script.CallCmdMakePortal();
-			yield return Timing.WaitForSeconds(0.5f);
-			allowPortal = false;
-		}
-
-		private readonly Vector portalOffset = new Vector(0, -2, 0);
-
-		[MethodImpl(MethodImplOptions.AggressiveInlining)]
-		private Vector GetRandomHeavyPos()
-		{
-			var spawns = ArithSpawningKit.RandomPlayerSpawning.RandomPlayerSpawning.Instance.Data.PlayerLoadedSpawns;
-			return spawns[UnityEngine.Random.Range(0, spawns.Count)].Position + portalOffset;
-		}
-
-		public void OnPocketDimensionDie(PlayerPocketDimensionDieEvent ev)
-		{
-			ev.Die = false;
-			ev.Player.Teleport(pocketPos);
-		}
+		public void OnWarheadKeycardAccess(WarheadKeycardAccessEvent ev) => ev.Allow = false;
 
 		private IEnumerator<float> Phase3()
 		{
@@ -1765,16 +1796,23 @@ namespace ArithFeather.ClassDEscape
 			Server.Map.AnnounceCustomMessage("EMERGENCY BACKUP POWER ENGAGED . ENTRANCE CHECKPOINT IS NOW OPEN");
 
 			// Send elevators up
-			foreach (var ele in HczElevators)
+			var ev1 = HczElevators[0];
+			var ev2 = HczElevators[1];
+			while (!(ev1.ElevatorStatus == ElevatorStatus.Down && ev2.ElevatorStatus == ElevatorStatus.Down))
 			{
-				if (ele.ElevatorStatus == ElevatorStatus.Down)
+				if (ev1.ElevatorStatus == ElevatorStatus.Up)
 				{
-					ele.MovingSpeed = 3;
-					ele.Use();
+					ev1.MovingSpeed = 2;
+					ev1.Use();
 				}
-			}
+				if (ev2.ElevatorStatus == ElevatorStatus.Up)
+				{
+					ev2.MovingSpeed = 2;
+					ev2.Use();
+				}
 
-			yield return Timing.WaitForSeconds(6f);
+				yield return Timing.WaitForSeconds(1f);
+			}
 
 			// Unlock entrance checkpoint
 			var doorCount = CachedHczDoors.Count;
@@ -1790,85 +1828,72 @@ namespace ArithFeather.ClassDEscape
 
 			yield return Timing.WaitUntilTrue(() => NineTailedFoxAnnouncer.singleton.isFree);
 
-			Server.Map.FemurBreaker(true);
+			// Send elevators Down
+			ev1.MovingSpeed = 5;
+			ev1.Use();
+			ev2.MovingSpeed = 5;
+			ev2.Use();
 
-			yield return Timing.WaitForSeconds(2f);
+			yield return Timing.WaitForSeconds(2);
 
-			// Send elevators up
-			foreach (var ele in HczElevators)
-			{
-				if (ele.ElevatorStatus == ElevatorStatus.Down)
-				{
-					ele.MovingSpeed = 5;
-					ele.Use();
-				}
-			}
-
-			yield return Timing.WaitForSeconds(1);
-
-			// Rid of SCP
+			// Kill SCP
+			Broadcast(3, "Larry and Shyguy disappeared...");
 			foreach (var scp in RoundSCP)
 			{
 				scp.ChangeRole(Role.SPECTATOR);
+				PersonalBroadcast(scp, 10, $"You will respawn soon, please wait...");
 			}
 
-			// Respawn players, pool HP
-			var playerCount = roundPlayers.Count;
+			// Pool HP
+			var playerCount = RoundPlayers.Count;
 			var hpPool = 0;
+
 			for (int i = 0; i < playerCount; i++)
 			{
 				var player = RoundPlayers[i];
 
-				if (player.TeamRole.Role == Role.CLASSD)
+				if (!PlayerIsDead(player))
 				{
 					hpPool += player.GetHealth();
 				}
 			}
 
 			const int ClassDHP = 100;
-			int hpEach = (int)(hpPool / playerCount);
-			Broadcast(5, $"Dead players have been respawned with {hpEach} HP.");
-			hpEach = ClassDHP - hpEach;
+			hpPool = (int)(hpPool / playerCount);
+			Broadcast(7, $"Dead players have been respawned with {hpPool} HP.");
+			hpPool = ClassDHP - hpPool;
 
 			// Damage players
 			for (int i = 0; i < playerCount; i++)
 			{
 				var player = RoundPlayers[i];
 
-				if (player.TeamRole.Role != Role.CLASSD)
+				if (PlayerIsDead(player))
 				{
 					player.ChangeRole(Role.CLASSD, true, false);
 
 					// Position inside random elevator
-					var randomEv = LczElevators[UnityEngine.Random.Range(0, LczElevators.Count)];
-					player.Teleport(Tools.Vec3ToVec((randomEv.GetComponent() as Lift).transform.position + new Vector3(0, 1.35f, 0)));
+					var randomEv = HczElevators[UnityEngine.Random.Range(0, HczElevators.Count)].GetComponent() as Lift;
 
-					// Damage
-					player.Damage(hpEach, DamageType.NONE);
+					Transform target = null;
+					foreach (Lift.Elevator elevator in randomEv.elevators)
+					{
+						if (!elevator.door.GetBool("isOpen"))
+						{
+							target = elevator.target;
+						}
+					}
+
+					player.Teleport(Tools.Vec3ToVec(target.position));
+
+					// Damage 
+					player.Damage(hpPool, DamageType.NONE);
 				}
 			}
 
-			yield return Timing.WaitForSeconds(4);
-
-			// Kill SCP
-
-			Server.Map.Shake();
-			var scpCount = RoundSCP.Count;
-			for (int i = scpCount > 1 ? 1 : 0; i < scpCount; i++)
-			{
-				var scp = roundSCP[i];
-
-				if (scp.TeamRole.Team == Smod2.API.Team.SCP)
-				{
-					scp.ChangeRole(Role.SPECTATOR);
-					PersonalBroadcast(scp, 10, $"You will respawn soon, please wait...");
-				}
-			}
-
-			yield return Timing.WaitForSeconds(15);
+			yield return Timing.WaitForSeconds(10);
 
 			Server.Map.AnnounceCustomMessage("DANGER . SCP 9 3 9 CONTAINMENT BREACH . . . CAUTION . THEY BYTE");
-
 
 			// Spawn SCP
 			var nutCount = RoundSCP.Count;
@@ -1889,7 +1914,7 @@ namespace ArithFeather.ClassDEscape
 
 			for (int i = 1; i < nutCount; i++)
 			{
-				var scp = RoundSCP[0];
+				var scp = RoundSCP[i];
 				scp.ChangeRole(UnityEngine.Random.Range(0f, 1f) > 0.5f ? Role.SCP_939_53 : Role.SCP_939_89);
 				scp.Teleport(Server.Map.GetRandomSpawnPoint(Role.FACILITY_GUARD));
 			}
@@ -1905,44 +1930,38 @@ namespace ArithFeather.ClassDEscape
 			Server.Map.StartWarhead();
 		}
 
-		/// <summary>
-		/// Makes sure a larry teleports every # seconds and creates a new portal after
-		/// </summary>
-		private IEnumerator<float> LarryTimer(Player player)
+		private IEnumerator<float> SetSCP079Stats(Player player)
 		{
 			yield return Timing.WaitForSeconds(1);
 
-			PersonalBroadcast(player, 10, $"You will automatically teleport every {secondsUntil106Teleport} seconds.");
-			var playerScript = (player.GetGameObject() as GameObject).GetComponent<Scp106PlayerScript>();
-			larryTpTimer = secondsUntil106Teleport - 4;
+			var scp = (player.GetGameObject() as GameObject).GetComponent<Scp079PlayerScript>();
+			var levels = scp.levels;
 
-			yield return Timing.WaitForSeconds(1);
-
-			allowPortal = true;
-			playerScript.CallCmdMakePortal();
-			yield return Timing.WaitForSeconds(0.5f);
-			allowPortal = false;
-
-			while (currentGameState == ZoneType.HCZ)
+			for (int i = 0; i < levels.Length; i++)
 			{
-				yield return Timing.WaitForSeconds(1);
-				larryTpTimer -= 1;
+				var level = levels[i];
 
-				if (larryTpTimer <= 0)
+				switch (i)
 				{
-					var moveSync = playerScript.GetComponent<FallDamage>();
-					yield return Timing.WaitUntilTrue(() => moveSync.isGrounded);
-
-					autoTeleport = true;
-					playerScript.CallCmdUsePortal();
-
-					yield return Timing.WaitForSeconds(3f);
-				}
-				else if (larryTpTimer <= 10)
-				{
-					PersonalBroadcast(player, 1, $"Teleport in {larryTpTimer}");
+					case 0:
+						level.maxMana = 10;
+						break;
+					case 1:
+						level.maxMana = 15;
+						break;
+					case 2:
+						level.maxMana = 25;
+						break;
+					case 3:
+						level.maxMana = 30;
+						break;
+					case 4:
+						level.maxMana = 35;
+						break;
 				}
 			}
+
+			scp.NetworkmaxMana = 10;
 		}
 
 		public void OnCheckEscape(PlayerCheckEscapeEvent ev)
@@ -1954,6 +1973,8 @@ namespace ArithFeather.ClassDEscape
 			PersonalBroadcast(ev.Player, 5, "Congratulations! You have escaped the facility!");
 			CheckEndPhase3(false, false);
 		}
+
+		public void On079AddExp(Player079AddExpEvent ev) => ev.ExpToAdd *= expMultiplier;
 
 		#endregion
 
