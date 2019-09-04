@@ -74,7 +74,16 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ClassDEscape.cs" />
+    <Compile Include="CustomAPI\Broadcasts.cs" />
+    <Compile Include="CustomAPI\CustomAPI.cs" />
+    <Compile Include="CustomAPI\CustomPlayerManager.cs" />
+    <Compile Include="CustomAPI\EventHandler.cs" />
+    <Compile Include="CustomAPI\LightControl.cs" />
+    <Compile Include="CustomAPI\ManualEndGame.cs" />
+    <Compile Include="ScaryLarry.cs" />
+    <Compile Include="PowerOuttage.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="LarryController.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
