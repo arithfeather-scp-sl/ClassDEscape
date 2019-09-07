@@ -61,9 +61,11 @@ namespace ArithFeather.ClassDEscape
 		private const int WinTextSize = 70;
 
 		private static readonly string JoinGameMessage1 =
-			$"<size={ServerInfoSize}><color={ServerInfoColor}>Welcome to <color={ServerHighLightColor}>Class D Escape v{ModVersion} beta test!</color> Press ` to open the console and enter '<color={ServerHighLightColor}>.help</color>' for mod information!</color></size>";
+			$"<size={ServerInfoSize}><color={ServerInfoColor}>Welcome to <color={ServerHighLightColor}>Class D Escape v{ModVersion}! (beta testing in progress)</color> Press ` to open the console and enter '<color={ServerHighLightColor}>.help</color>' for mod information!</color></size>";
 		private static readonly string JoinGameMessage2 =
 			$"<size={ServerInfoSize}><color={ServerInfoColor}>If you like the plugin, join the discord for updates!\n <color={ServerHighLightColor}>https://discord.gg/DunUU82</color></color></size>";
+
+		private readonly string helpMessage = "Class D Escape Mode v{0}\nhttps://discord.gg/DunUU82\nClass D Objective is to escape the facility without getting killed. Difficulty is hard.\nSCP need to kill all the Class D before they escape\nCard keys and other loot spawn randomly around the facility. Look near tables, chairs, shelves, etc.\nSCP914 is disabled. Nuke is disabled. Players respawn each phase.\nPhase 1: Find a keycard and escape through checkpoint to elevator\nPhase 2: watch out for the randomly teleporting Larry and Shyguy in the dark. Use your flashlight carefully.\nPhase 2: Activate generators to reduce the power reactivation countdown. This will begin phase 3.\nPhase 3: Find the black keycard and escape the facility. Watch out for the Dog and Computer SCP.";
 
 		#endregion
 
@@ -87,13 +89,6 @@ namespace ArithFeather.ClassDEscape
 
 		#endregion
 
-		#region Lang
-
-		//[LangOption]
-		private readonly string helpMessage = "Class D Escape Mode v{0}\nhttps://discord.gg/DunUU82\nClass D Objective is to escape the facility without getting killed. Difficulty is hard.\nSCP need to kill all the Class D before they escape\nCard keys and other loot spawn randomly around the facility. Look near tables, chairs, shelves, etc.\nSCP914 is disabled. Nuke is disabled. Players respawn each phase.\nPhase 1: Find a keycard and escape through checkpoint to elevator\nPhase 2: watch out for the randomly teleporting Larry and Shyguy in the dark. Use your flashlight carefully.\nPhase 2: Activate generators to reduce the power reactivation countdown. This will begin phase 3.\nPhase 3: Find the black keycard and escape the facility. Watch out for the Dog and Computer SCP.";
-
-		#endregion
-
 		//++ Round Data
 
 		private ZoneType currentGameState = ZoneType.UNDEFINED;
@@ -112,21 +107,18 @@ namespace ArithFeather.ClassDEscape
 
 		private bool IsGameEnding => CustomAPI.CustomAPI.IsGameEnding;
 
-		// Doors
-		private List<Door> cachedPrisonDoors;
-		private List<Door> CachedPrisonDoors => cachedPrisonDoors ?? (cachedPrisonDoors = new List<Door>(30));
-		private List<Door> cachedLczDoors;
-		private List<Door> CachedLczDoors => cachedLczDoors ?? (cachedLczDoors = new List<Door>(70));
-		private List<Door> cachedHczDoors;
-		private List<Door> CachedHczDoors => cachedHczDoors ?? (cachedHczDoors = new List<Door>(70));
-		private Door cached173Door;
-
 		//+ Phase 1
 
 		private List<ElevatorPlayer> playersReachedElevator;
 		private List<ElevatorPlayer> PlayersReachedElevator => playersReachedElevator ?? (playersReachedElevator = new List<ElevatorPlayer>(14));
 		private List<Elevator> lczElevators;
 		private List<Elevator> LczElevators => lczElevators ?? (lczElevators = new List<Elevator>(4));
+
+		private List<Door> cachedPrisonDoors;
+		private List<Door> CachedPrisonDoors => cachedPrisonDoors ?? (cachedPrisonDoors = new List<Door>(30));
+		private List<Door> cachedLczDoors;
+		private List<Door> CachedLczDoors => cachedLczDoors ?? (cachedLczDoors = new List<Door>(70));
+		private Door cached173Door;
 
 		private class ElevatorPlayer
 		{
@@ -155,9 +147,9 @@ namespace ArithFeather.ClassDEscape
 		//+ Phase 2
 
 		private PowerOuttage powerOuttage;
-		private LarryController larryController;
-		private bool attemptedToNuke;
+		private LarryController LarryController;
 		private bool beginPhase2;
+		private Door cachedEntranceChkPnt;
 
 		//+ Phase 3
 
@@ -181,7 +173,7 @@ namespace ArithFeather.ClassDEscape
 			powerOuttage = new PowerOuttage(this);
 			powerOuttage.OnPowerReactivation += OnPowerReactivation;
 
-			larryController = new LarryController(this);
+			LarryController = new LarryController(this);
 
 			AddEventHandlers(this);
 
@@ -296,11 +288,11 @@ namespace ArithFeather.ClassDEscape
 			Scp914.singleton.working = true; // Makes it so it can't be used
 
 			// Phase 2
-			attemptedToNuke = false;
 			beginPhase2 = false;
 
 			// Phase 3
 			beginPhase3 = false;
+			EscapedPlayers.Clear();
 		}
 
 		/// <summary>
@@ -309,13 +301,13 @@ namespace ArithFeather.ClassDEscape
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		private void SetupDoors()
 		{
-			CachedHczDoors.Clear();
 			CachedLczDoors.Clear();
 			CachedPrisonDoors.Clear();
 
 			var doors = Server.Map.GetDoors();
 			var doorCount = doors.Count;
 			bool found173Door = false;
+			bool foundchkpnt = false;
 			for (int i = 0; i < doorCount; i++)
 			{
 				var door = doors[i].GetComponent() as Door;
@@ -330,12 +322,15 @@ namespace ArithFeather.ClassDEscape
 					{
 						case "HeavyRooms":
 
-							CachedHczDoors.Add(door);
-
 							// Open locked hcz doors
 							if (door.doorType == 2)
 							{
 								door.NetworkisOpen = true;
+							}
+							else if (!foundchkpnt && door.doorType == 3)
+							{
+								foundchkpnt = true;
+								cachedEntranceChkPnt = door;
 							}
 
 							break;
@@ -498,6 +493,9 @@ namespace ArithFeather.ClassDEscape
 				}
 			}
 
+			// Wait for decontamination event
+			yield return Timing.WaitForSeconds(1.5f);
+
 			// Send nuts back home so they can't sneak in the elevators
 			var scpCount = RoundSCP.Count;
 			var nutSpawnPos = map.GetSpawnPoints(Role.SCP_173)[0];
@@ -587,7 +585,6 @@ namespace ArithFeather.ClassDEscape
 				}
 			}
 
-			// Wait enough time for decontamination message
 			yield return Timing.WaitForSeconds(14);
 
 			// Start lights out
@@ -639,16 +636,7 @@ namespace ArithFeather.ClassDEscape
 			map.AnnounceCustomMessage("EMERGENCY BACKUP POWER ENGAGED . ENTRANCE CHECKPOINT IS NOW OPEN");
 
 			// Unlock entrance checkpoint
-			var doorCount = CachedHczDoors.Count;
-			for (int i = 0; i < doorCount; i++)
-			{
-				var door = CachedHczDoors[i];
-
-				if (door.doorType == 3)
-				{
-					door.OpenDecontamination();
-				}
-			}
+			cachedEntranceChkPnt.OpenDecontamination();
 
 			// Send elevators up, wait until they are both up
 			var ev1 = HczElevators[0];
@@ -675,19 +663,19 @@ namespace ArithFeather.ClassDEscape
 
 			// Cache position and send elevators Down
 			List<Vector> spawnPoints = new List<Vector>(2);
-			foreach (var ev in HczElevators)
+			foreach (var hczElevator in HczElevators)
 			{
-				foreach (Lift.Elevator elevator in (ev.GetComponent() as Lift).elevators)
+				foreach (Lift.Elevator elevator in (hczElevator.GetComponent() as Lift).elevators)
 				{
-					if (!elevator.door.GetBool("isOpen"))
+					if (elevator.door.GetBool("isOpen"))
 					{
 						spawnPoints.Add(Tools.Vec3ToVec(elevator.target.position));
 						break;
 					}
 				}
 
-				ev.MovingSpeed = 5;
-				ev.Use();
+				hczElevator.MovingSpeed = 5;
+				hczElevator.Use();
 			}
 
 			// Kill SCP
@@ -707,35 +695,52 @@ namespace ArithFeather.ClassDEscape
 			// Pool HP
 			playerCount = RoundPlayers.Count;
 			hpEach = 0;
+			var deadPlayercount = 0;
 
 			for (int i = 0; i < playerCount; i++)
 			{
 				var player = RoundPlayers[i];
 
-				if (player.CurrentRole() == Role.CLASSD)
+				if (player.GetCurrentRole() == Role.CLASSD)
 				{
 					hpEach += player.GetHealth();
 				}
+				else
+				{
+					deadPlayercount++;
+				}
 			}
 
-			hpEach = Mathf.Clamp((int)(hpEach / playerCount), 1, 100);
-			CustomAPI.CustomAPI.Broadcast(7, $"Dead players have been respawned with {hpEach} HP.");
-			hpEach = ClassDHP - hpEach;
-
-			// Damage players
-			for (int i = 0; i < playerCount; i++)
+			if (deadPlayercount > 0)
 			{
-				var player = RoundPlayers[i];
+				hpEach = Mathf.Clamp((int)(hpEach / playerCount), 1, 100);
 
-				if (player.CurrentRole() == Role.SPECTATOR)
+				if (deadPlayercount == 1)
 				{
-					player.ChangeRole(Role.CLASSD, true, false);
+					CustomAPI.CustomAPI.Broadcast(7, $"1 dead player has been respawned with {hpEach} HP.");
+				}
+				else
+				{
+					CustomAPI.CustomAPI.Broadcast(7, $"{deadPlayercount} dead players have been respawned with {hpEach} HP.");
+				}
 
-					// Position inside random elevator
-					player.Teleport(spawnPoints[UnityEngine.Random.Range(0, 2)]);
+				hpEach = ClassDHP - hpEach;
 
-					// Damage 
-					if (hpEach > 0) player.Damage(hpEach, DamageType.NONE);
+				// Damage players
+				for (int i = 0; i < playerCount; i++)
+				{
+					var player = RoundPlayers[i];
+
+					if (player.GetCurrentRole() == Role.SPECTATOR)
+					{
+						player.ChangeRole(Role.CLASSD, true, false);
+
+						// Position inside random elevator
+						player.Teleport(spawnPoints[UnityEngine.Random.Range(0, 2)]);
+
+						// Damage 
+						player.Damage(hpEach, DamageType.NONE);
+					}
 				}
 			}
 
@@ -832,6 +837,8 @@ namespace ArithFeather.ClassDEscape
 				}
 			}
 
+			LarryController.DisconnectPlayer(playerID);
+
 			// Check round end on no SCP/Players left
 			if (RoundSCP.Count == 0)
 			{
@@ -843,39 +850,41 @@ namespace ArithFeather.ClassDEscape
 				CustomAPI.CustomAPI.Broadcast(endScreenSpeedSeconds, "Player disconnected. There are no players left, restarting round...");
 				EndGame(RoundSummary.LeadingTeam.Anomalies);
 			}
-
-			//Update lists
-			switch (currentGameState)
+			else
 			{
-				case ZoneType.LCZ:
+				//Update lists
+				switch (currentGameState)
+				{
+					case ZoneType.LCZ:
 
-					RemoveElevatorPlayer(playerID);
-					CheckEndPhase1(false);
+						RemoveElevatorPlayer(playerID);
+						CheckEndPhase1(false);
 
-					break;
+						break;
 
-				case ZoneType.HCZ:
+					case ZoneType.HCZ:
 
-					RemoveElevatorPlayer(playerID);
-					CheckEndPhase2(false, false);
+						RemoveElevatorPlayer(playerID);
+						CheckEndPhase2(false, false);
 
-					break;
-				case ZoneType.ENTRANCE:
+						break;
+					case ZoneType.ENTRANCE:
 
-					//Remove escaped player
-					var escapedPlayerCount = EscapedPlayers.Count;
-					for (int i = 0; i < escapedPlayerCount; i++)
-					{
-						if (EscapedPlayers[i].PlayerId == playerID)
+						//Remove escaped player
+						var escapedPlayerCount = EscapedPlayers.Count;
+						for (int i = 0; i < escapedPlayerCount; i++)
 						{
-							EscapedPlayers.RemoveAt(i);
-							break;
+							if (EscapedPlayers[i].PlayerId == playerID)
+							{
+								EscapedPlayers.RemoveAt(i);
+								break;
+							}
 						}
-					}
 
-					CheckEndPhase3(false, false);
+						CheckEndPhase3(false, false);
 
-					break;
+						break;
+				}
 			}
 		}
 
@@ -899,6 +908,8 @@ namespace ArithFeather.ClassDEscape
 			// Testing Announcements
 			//if (ev.Player.GetRankName().ToUpper() == "OWNER")
 			//Server.Map.AnnounceCustomMessage(ev.Command);
+
+			Info($"Players: {RoundPlayers.Count} | SCP: {RoundSCP.Count}");
 
 			switch (ev.Command.ToUpper())
 			{
@@ -1130,6 +1141,7 @@ namespace ArithFeather.ClassDEscape
 
 		private void EndGame(RoundSummary.LeadingTeam winningTeam)
 		{
+			//CustomAPI.CustomAPI.Broadcast(3, $"Game Over Called. '{winningTeam}' win");
 			currentGameState = ZoneType.UNDEFINED;
 			roundStarted = false;
 			CustomAPI.CustomAPI.EndGame(winningTeam);
@@ -1145,7 +1157,7 @@ namespace ArithFeather.ClassDEscape
 
 		#region Phase 1
 
-		private const float TimeUntilIntroduction = 10f;
+		private const float TimeUntilIntroduction = 12f;
 
 		private string[] startCassieMessages = new string[]
 		{
@@ -1461,7 +1473,7 @@ namespace ArithFeather.ClassDEscape
 
 			foreach (var player in RoundPlayers)
 			{
-				if (player.CurrentRole() == Role.CLASSD)
+				if (player.GetCurrentRole() == Role.CLASSD)
 				{
 					EscapedPlayers.Add(player);
 				}

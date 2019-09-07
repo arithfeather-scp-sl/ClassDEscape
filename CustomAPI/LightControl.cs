@@ -24,11 +24,8 @@ namespace ArithFeather.CustomAPI
 
 		public void WaitingForPlayersEvent()
 		{
-			cachedGenerator = GameObject.FindObjectOfType<Generator079>();
+			cachedGenerator = UnityEngine.Object.FindObjectOfType<Generator079>();
 			cachedRooms = plugin.Server.Map.Get079InteractionRooms(Smod2.API.Scp079InteractionType.CAMERA);
-
-			keepLightsOffCoroutine = Timing.RunCoroutine(KeepLightsOff());
-			HczLightsOff();
 		}
 
 		public void RoundRestartEvent() => Timing.KillCoroutines(keepLightsOffCoroutine);
@@ -48,18 +45,18 @@ namespace ArithFeather.CustomAPI
 			}
 		}
 
-		public void HczLightsOn() => keepLightsOffCoroutine.IsPaused = true;
+		public void HczLightsOn() => keepLightsOffCoroutine.IsRunning = false;
 
 		public void HczLightsOff()
 		{
-			if (keepLightsOffCoroutine.IsPaused)
+			if (!keepLightsOffCoroutine.IsRunning)
 			{
 				FlickerTimer = 0;
-				keepLightsOffCoroutine.IsPaused = false;
+				keepLightsOffCoroutine = Timing.RunCoroutine(_KeepLightsOff());
 			}
 		}
 
-		private IEnumerator<float> KeepLightsOff()
+		private IEnumerator<float> _KeepLightsOff()
 		{
 			while (true)
 			{

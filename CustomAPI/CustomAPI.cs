@@ -58,7 +58,7 @@ namespace ArithFeather.CustomAPI
 
 	public static class PlayerExtensions
 	{
-		public static Team CurrentTeam(this Player player)
+		public static Team GetCurrentTeam(this Player player)
 		{
 			var comp = (player.GetGameObject() as GameObject).GetComponent<CharacterClassManager>();
 			if (comp != null)
@@ -67,7 +67,7 @@ namespace ArithFeather.CustomAPI
 			}
 			throw new Exception("Player no longer exists");
 		}
-		public static Role CurrentRole(this Player player)
+		public static Role GetCurrentRole(this Player player)
 		{
 			var comp = (player.GetGameObject() as GameObject).GetComponent<CharacterClassManager>();
 			if (comp != null)

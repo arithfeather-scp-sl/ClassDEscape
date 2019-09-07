@@ -58,6 +58,8 @@ namespace ArithFeather.ClassDEscape
 			player.Broadcast(8, $"You will automatically teleport every {secondsUntil106Teleport} seconds.");
 			if (allowManualTeleport) player.Broadcast(4, $"You can trigger the teleport manually.");
 
+			yield return Timing.WaitForSeconds(1);
+
 			var playerScript = (player.GetGameObject() as GameObject).GetComponent<Scp106PlayerScript>();
 			var moveSync = playerScript.GetComponent<FallDamage>();
 
@@ -69,9 +71,7 @@ namespace ArithFeather.ClassDEscape
 			yield return Timing.WaitForSeconds(0.5f);
 			AllowPortal = false;
 
-			yield return Timing.WaitForSeconds(3);
-
-			larryTpTimer = secondsUntil106Teleport;
+			larryTpTimer = secondsUntil106Teleport - 3;
 
 			while (true)
 			{

@@ -1,4 +1,5 @@
 ﻿using MEC;
+using RemoteAdmin;
 using Smod2;
 using System;
 using System.Collections.Generic;
@@ -23,33 +24,35 @@ namespace ArithFeather.CustomAPI
 			var players = PlayerManager.singleton.players;
 			var playerCount = players.Length;
 			var oldPlayers = new List<int>();
-			var newPlayers = new List<int>();
 
 			for (int i = 0; i < playerCount; i++)
 			{
-				NicknameSync component = players[i].GetComponent<NicknameSync>();
+				QueryProcessor component = players[i].GetComponent<QueryProcessor>();
 				if (component != null)
 				{
-					oldPlayers.Add(component.playerControllerId);
+					oldPlayers.Add(component.PlayerId);
 				}
 			}
 
 			yield return Timing.WaitForOneFrame;
 
+			players = PlayerManager.singleton.players;
+			playerCount = players.Length;
+			var newPlayers = new List<int>();
+
 			for (int i = 0; i < playerCount; i++)
 			{
-				NicknameSync component = players[i].GetComponent<NicknameSync>();
+				QueryProcessor component = players[i].GetComponent<QueryProcessor>();
 				if (component != null)
 				{
-					newPlayers.Add(component.playerControllerId);
+					newPlayers.Add(component.PlayerId);
 				}
 			}
 
-			var previousPlayerCount = oldPlayers.Count;
 			var currentPlayerCount = newPlayers.Count;
 
 			//Remove all matches to current players
-			for (int i = currentPlayerCount; i >= 0; i--)
+			for (int i = oldPlayers.Count - 1; i >= 0; i--)
 			{
 				var ppID = oldPlayers[i];
 

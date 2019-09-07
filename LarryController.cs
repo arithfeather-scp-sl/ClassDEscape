@@ -56,6 +56,22 @@ namespace ArithFeather.ClassDEscape
 			}
 		}
 
+		public void DisconnectPlayer(int playerID)
+		{
+			// If they were a larry, end it
+			for (int i = Larries.Count - 1; i >= 0; i--)
+			{
+				var larry = Larries[i];
+
+				if (larry.player.PlayerId == playerID)
+				{
+					larry.KillYourself();
+					Larries.RemoveAt(i);
+					return;
+				}
+			}
+		}
+
 		public void OnWaitingForPlayers(WaitingForPlayersEvent ev) => Larries.Clear();
 
 		public void On106CreatePortal(Player106CreatePortalEvent ev)
