@@ -74,8 +74,29 @@
     <Reference Include="Assembly-CSharp" HintPath="$(SCPSL)\Assembly-CSharp.dll" Private="false" />
     <Reference Include="Assembly-CSharp-firstpass" HintPath="$(SCPSL)\Assembly-CSharp-firstpass.dll" Private="false" />
     <Reference Include="DissonanceVoip" HintPath="$(SCPSL)\DissonanceVoip.dll" Private="false" />
+    <Reference Include="Exiled.API">
+      <HintPath>..\Exiled\bin\Debug\Exiled.API.dll</HintPath>
+    </Reference>
+    <Reference Include="Exiled.Bootstrap">
+      <HintPath>..\Exiled\bin\Debug\Exiled.Bootstrap.dll</HintPath>
+    </Reference>
+    <Reference Include="Exiled.Events">
+      <HintPath>..\Exiled\bin\Debug\Exiled.Events.dll</HintPath>
+    </Reference>
+    <Reference Include="Exiled.Loader">
+      <HintPath>..\Exiled\bin\Debug\Exiled.Loader.dll</HintPath>
+    </Reference>
+    <Reference Include="Exiled.Permissions">
+      <HintPath>..\Exiled\bin\Debug\Exiled.Permissions.dll</HintPath>
+    </Reference>
+    <Reference Include="Exiled.Updater">
+      <HintPath>..\Exiled\bin\Debug\Exiled.Updater.dll</HintPath>
+    </Reference>
     <Reference Include="Mirror" HintPath="$(SCPSL)\Mirror.dll" Private="false" />
     <Reference Include="NorthwoodLib" HintPath="$(SCPSL)\NorthwoodLib.dll" Private="false" />
+    <Reference Include="Smod2">
+      <HintPath>..\Smod2\Smod2\bin\Debug\net472\Smod2.dll</HintPath>
+    </Reference>
     <Reference Include="UnityEngine" HintPath="$(UNITY)\UnityEngine.dll" Private="false" />
     <Reference Include="UnityEngine.CoreModule" HintPath="$(UNITY)\UnityEngine.CoreModule.dll" Private="false" />
     <Reference Include="UnityEngine.PhysicsModule" HintPath="$(UNITY)\UnityEngine.PhysicsModule.dll" Private="false" />
@@ -93,9 +114,6 @@
     <Compile Include="LarryController.cs" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="EXILED">
-      <Version>2.0.13</Version>
-    </PackageReference>
     <PackageReference Include="Lib.Harmony">
       <Version>2.0.2</Version>
     </PackageReference>
