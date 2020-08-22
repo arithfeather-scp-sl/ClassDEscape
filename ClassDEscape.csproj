@@ -103,12 +103,12 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ClassDEscape.cs" />
-    <Compile Include="CustomAPI\Broadcasts.cs" />
     <Compile Include="CustomAPI\CustomAPI.cs" />
     <Compile Include="CustomAPI\CustomPlayerManager.cs" />
     <Compile Include="CustomAPI\EventHandler.cs" />
-    <Compile Include="CustomAPI\LightControl.cs" />
-    <Compile Include="CustomAPI\ManualEndGame.cs" />
+    <Compile Include="Phase1.cs" />
+    <Compile Include="Phase2.cs" />
+    <Compile Include="Phase3.cs" />
     <Compile Include="ScaryLarry.cs" />
     <Compile Include="PowerOuttage.cs" />
     <Compile Include="LarryController.cs" />

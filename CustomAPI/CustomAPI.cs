@@ -49,11 +49,6 @@ namespace ArithFeather.CustomAPI
 
 		public static void EndGame(RoundSummary.LeadingTeam winningTeam) => eventHandler.ManualEndGame.EndGame(winningTeam);
 		public static bool IsGameEnding => eventHandler.ManualEndGame.IsGameEnding;
-
-		public static void ClearBroadcast(this Player player, int time, string message) => eventHandler.Broadcasts.PersonalClearBroadcasts(player);
-		public static void ClearBroadcast() => eventHandler.Broadcasts.ClearBroadcasts();
-		public static void Broadcast(this Player player, int time, string message) => eventHandler.Broadcasts.PersonalBroadcast(player, (uint)time, message);
-		public static void Broadcast(int time, string message) => eventHandler.Broadcasts.Broadcast((uint)time, message);
 	}
 
 	public static class PlayerExtensions
